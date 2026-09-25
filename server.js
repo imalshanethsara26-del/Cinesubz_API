@@ -9,68 +9,9 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 
 const HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     'Referer': 'https://cinesubz.co/'
 };
-
-// ZT-Links & Csplayer Bypass Logic for CineSubz
-async function resolveFinalLinks(ztUrl) {
-    try {
-        const res1 = await axios.get(ztUrl, { headers: HEADERS, maxRedirects: 5, timeout: 10000 });
-        const $ = cheerio.load(res1.data);
-        let targetUrl = '';
-        
-        const formAction = $('form').attr('action');
-        if (formAction) {
-            targetUrl = formAction;
-        } else {
-            const scriptHtml = $('script').text();
-            const match = scriptHtml.match(/window\.location\.href\s*=\s*['"]([^'"]+)['"]/) || scriptHtml.match(/location\.href\s*=\s*['"]([^'"]+)['"]/);
-            if (match) targetUrl = match[1];
-        }
-
-        if (!targetUrl) {
-            $('a').each((i, el) => {
-                const h = $(el).attr('href') || '';
-                if (h.includes('csplayer') || h.includes('player') || h.includes('download')) targetUrl = h;
-            });
-        }
-
-        if (!targetUrl) targetUrl = ztUrl;
-        if (targetUrl.startsWith('/')) targetUrl = 'https://cinesubz.co' + targetUrl;
-        else if (!targetUrl.startsWith('http')) targetUrl = 'https://' + targetUrl;
-
-        const res2 = await axios.get(targetUrl, { headers: { ...HEADERS, 'Referer': ztUrl }, maxRedirects: 5, timeout: 10000 });
-        const $2 = cheerio.load(res2.data);
-        const directLinks = [];
-
-        $2('a').each((i, el) => {
-            const h = $2(el).attr('href') || '';
-            const t = $2(el).text().trim();
-            if (h && (h.includes('pixeldrain') || h.includes('telegram') || h.includes('t.me') || h.includes('drive.google') || h.includes('mega') || h.includes('gofile') || h.includes('file'))) {
-                if (!directLinks.some(d => d.link === h)) {
-                    directLinks.push({ name: t || 'Download Link', link: h });
-                }
-            }
-        });
-
-        if (directLinks.length === 0) {
-            $2('a').each((i, el) => {
-                const h = $2(el).attr('href') || '';
-                const t = $2(el).text().trim();
-                if (h && !h.includes('#') && !h.includes('javascript') && !h.includes('facebook') && !h.includes('twitter')) {
-                    if (!directLinks.some(d => d.link === h)) {
-                        directLinks.push({ name: t || 'Link', link: h });
-                    }
-                }
-            });
-        }
-
-        return directLinks.length > 0 ? directLinks : [{ name: 'Direct Page', link: targetUrl }];
-    } catch (e) {
-        return [{ name: 'ZT Link', link: ztUrl }];
-    }
-}
 
 // Root Status Route
 app.get('/', (req, res) => {
@@ -84,7 +25,7 @@ app.get('/', (req, res) => {
     });
 });
 
-// Search Endpoint
+// Search Endpoint (අපේ පරණ සාර්ථක ලොජික් එක)
 app.get('/api/v1/cinesubz/search', async (req, res) => {
     try {
         const query = req.query.q;
@@ -125,7 +66,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Info & Download Endpoint
+// Info & Download Endpoint (CineSubz සඳහා විශේෂිතයි)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     try {
         const movieUrl = req.query.url || req.query.q;
@@ -134,22 +75,11 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         const response = await axios.get(movieUrl, { headers: HEADERS, timeout: 15000 });
         const $ = cheerio.load(response.data);
 
-        let title = $('meta[property="og:title"]').attr('content');
-        if (!title) {
-            title = $('h1').first().text().trim();
-        }
-        if (!title) {
-            title = '';
-        }
+        let title = $('meta[property="og:title"]').attr('content') \vert{}\vert{} $('h1').first().text().trim() || '';
         title = title.replace(' - CineSubz', '').replace(' Sinhala Subtitles', '').replace(' | සිංහල උපසිරැසි සමඟ', '').trim();
 
-        let image = $('meta[property="og:image"]').attr('content');
-        if (!image) {
-            image = $('.poster img, article img').first().attr('src') || '';
-        }
-        if (image.startsWith('//')) {
-            image = 'https:' + image;
-        }
+        let image = $('meta[property="og:image"]').attr('content') \vert{}\vert{} $('.poster img, article img').first().attr('src') || '';
+        if (image.startsWith('//')) image = 'https:' + image;
 
         let quality = $('.quality, .badge-quality').first().text().trim() || 'WEB-DL';
         let rating = $('.score, .rating').first().text().trim() || 'N/A';
@@ -163,35 +93,62 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         });
         if (!story) story = 'තොරතුරු නොමැත.';
 
-        const rawLinks = [];
-        $('a').each((i, el) => {
-            const href = $(el).attr('href') || '';
-            const text = $(el).text().trim();
-            const parentText = $(el).parent().text().replace(/\s+/g, ' ').trim();
-            const boxText = $(el).closest('div, li, tr').text().replace(/\s+/g, ' ').trim();
-            const combined = text + ' ' + parentText + ' ' + boxText;
+        const downloads = [];
 
-            if (href && (href.includes('zt-link') || href.includes('csplayer') || href.includes('/link/') || href.includes('/download/'))) {
-                let qMatch = combined.match(/(1080p|720p|480p|2160p|4k|web-dl|bluray)/i);
-                let q = qMatch ? qMatch[0].toUpperCase() : 'WEB-DL';
-                let sizeMatch = combined.match(/(\d+(\.\d+)?\s*(gb|mb))/i);
-                let size = sizeMatch ? sizeMatch[0].toUpperCase() : 'N/A';
-                
-                if (!rawLinks.some(r => r.link === href)) {
-                    rawLinks.push({ quality: q, size: size, link: href });
+        // CineSubz ඩවුන්ලෝඩ් ලින්ක්ස් සහ ටේබල් පේළි ස්ක්‍රැප් කිරීම
+        $('tr, .link-row, .dl-row, div[class*="download"], .button-download').each((i, el) => {
+            const linkEl = $(el).find('a');
+            const href = linkEl.attr('href') || $(el).attr('href') || '';
+
+            if (href && (href.includes('/links/') || href.includes('pixeldrain') || href.includes('telegram') || href.includes('mega') || href.includes('gofile') || href.includes('t.me'))) {
+                const rowText = $(el).text().replace(/\s+/g, ' ').trim();
+
+                const qMatch = rowText.match(/(1080p|720p|480p|2160p|4K|WEB-DL|BluRay)/i);
+                const q = qMatch ? qMatch[0].toUpperCase() : "HD";
+
+                const sMatch = rowText.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
+                const size = sMatch ? sMatch[0] : "N/A";
+
+                let server = "Direct Server";
+                if (href.includes('pixeldrain')) server = "PixelDrain";
+                else if (href.includes('telegram') || href.includes('t.me')) server = "Telegram";
+                else if (href.includes('mega')) server = "Mega";
+
+                if (!downloads.some(d => d.link === href)) {
+                    downloads.push({
+                        name: `🎥 [CineSubz] ${server} - ${q} (${size})`,
+                        quality: q,
+                        size: size,
+                        link: href
+                    });
                 }
             }
         });
 
-        const downloads = [];
-        for (const item of rawLinks) {
-            const finalDl = await resolveFinalLinks(item.link);
-            downloads.push({
-                quality: item.quality,
-                size: item.size,
-                language: 'English',
-                zt_link: item.link,
-                direct_buttons: finalDl
+        // Fallback: මුල් ක්‍රමයට ලින්ක් එකක් හමු නොවුණහොත් සියලුම a ටැග් පරික්ෂා කිරීම
+        if (downloads.length === 0) {
+            $('a').each((i, el) => {
+                const href = $(el).attr('href') || '';
+                const text = $(el).text().trim();
+                const parentText = $(el).parent().text().replace(/\s+/g, ' ').trim();
+                const combined = text + ' ' + parentText;
+
+                if (href && (href.includes('/links/') || href.includes('pixeldrain') || href.includes('telegram')) && !href.includes('cinesubz.co/?s=')) {
+                    const qMatch = combined.match(/(1080p|720p|480p|2160p|4K)/i);
+                    const q = qMatch ? qMatch[0].toUpperCase() : "HD";
+
+                    const sMatch = combined.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
+                    const size = sMatch ? sMatch[0] : "N/A";
+
+                    if (!downloads.some(d => d.link === href)) {
+                        downloads.push({
+                            name: `🎥 [CineSubz] Download - ${q} (${size})`,
+                            quality: q,
+                            size: size,
+                            link: href
+                        });
+                    }
+                }
             });
         }
 
@@ -201,9 +158,9 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             site: "cinesubz",
             data: {
                 title,
-                image,
-                quality,
                 rating,
+                quality,
+                image,
                 story,
                 downloads
             }
