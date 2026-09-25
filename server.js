@@ -134,11 +134,22 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         const response = await axios.get(movieUrl, { headers: HEADERS, timeout: 15000 });
         const $ = cheerio.load(response.data);
 
-        let title = $('meta[property="og:title"]').attr('content') \vert{}\vert{} $('h1').first().text().trim() || '';
+        let title = $('meta[property="og:title"]').attr('content');
+        if (!title) {
+            title = $('h1').first().text().trim();
+        }
+        if (!title) {
+            title = '';
+        }
         title = title.replace(' - CineSubz', '').replace(' Sinhala Subtitles', '').replace(' | සිංහල උපසිරැසි සමඟ', '').trim();
 
-        let image = $('meta[property="og:image"]').attr('content') \vert{}\vert{} $('.poster img, article img').first().attr('src') || '';
-        if (image.startsWith('//')) image = 'https:' + image;
+        let image = $('meta[property="og:image"]').attr('content');
+        if (!image) {
+            image = $('.poster img, article img').first().attr('src') || '';
+        }
+        if (image.startsWith('//')) {
+            image = 'https:' + image;
+        }
 
         let quality = $('.quality, .badge-quality').first().text().trim() || 'WEB-DL';
         let rating = $('.score, .rating').first().text().trim() || 'N/A';
