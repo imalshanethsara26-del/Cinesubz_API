@@ -24,7 +24,7 @@ app.get('/', (req, res) => {
     });
 });
 
-// Search Endpoint (කිසිදු වෙනසක් කර නැත)
+// Search Endpoint (වෙනස් කර නැත)
 app.get('/api/v1/cinesubz/search', async (req, res) => {
     try {
         const query = req.query.q;
@@ -62,7 +62,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Info & Download Endpoint for Cinesubz (నిවැරදි කරන ලදී)
+// Info & Download Endpoint (අවසාන ඩිරෙක්ට් ලින්ක්ස් වෙනකම්ම ස්ක්‍රේප් කරන ලෙස සකසා ඇත)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     try {
         const movieUrl = req.query.url;
@@ -71,15 +71,16 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         const response = await axios.get(movieUrl, { headers: HEADERS, timeout: 10000 });
         const $ = cheerio.load(response.data);
 
-        // නිවැරදි මූවි ටයිටල් එක ලබා ගැනීම
+        // Title
         let title = $('h1.entry-title').text().trim();
         if (!title) title = $('h1').first().text().trim();
         if (!title) title = $('title').text().trim();
 
+        // Image
         let image = $('meta[property="og:image"]').attr('content');
-        if (!image) image = $('.poster img, .single-poster img, .entry-content img, article img').first().attr('src') || '';
+        if (!image) image = $('.poster img, .single-poster img, .entry-content img').first().attr('src') || '';
 
-        // IMDb Rating ලබා ගැනීම
+        // IMDb
         let imdb_rating = $('.imdb-rate, .rating, .score, span[itemprop="ratingValue"]').first().text().trim();
         if (!imdb_rating) {
             const pageText = $.text();
@@ -88,7 +89,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         }
         if (!imdb_rating) imdb_rating = "N/A";
 
-        // කතාවේ විස්තරය (Story) ලබා ගැනීම
+        // Story
         let story = '';
         $('.entry-content p, .su-spoiler-content p, .synopsis p').each((i, el) => {
             const text = $(el).text().trim();
@@ -96,46 +97,79 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 if (!story) story = text;
             }
         });
-        if (!story) {
-            $('.entry-content').each((i, el) => {
-                const text = $(el).text().trim();
-                if (text && text.length > 50) story = text.substring(0, 300) + '...';
-            });
-        }
         if (!story) story = 'No description available';
 
-        const downloads = [];
-
-        // නිවැරදි Download සහ zt-links / Telegram ලින්ක්ස් ෆිල්ටර් කර ලබා ගැනීම
+        // Collect zt-links first
+        const ztLinks = [];
         $('a').each((i, el) => {
             const href = $(el).attr('href') || '';
             const text = $(el).text().trim();
             const parentText = $(el).parent().text().replace(/\s+/g, ' ').trim();
             const fullText = text + ' ' + parentText;
 
-            if (href && (href.includes('/zt-links/') || href.includes('t.me') || href.includes('pixeldrain'))) {
-                if (href.includes('#') || href === 'https://cinesubz.net/') return;
-
-                // Quality එක සෙවීම (480p, 720p, 1080p, BluRay ආදී වශයෙන්)
+            if (href && href.includes('/zt-links/')) {
                 const qMatch = fullText.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|HDRip)/i);
                 const quality = qMatch ? qMatch[0].toUpperCase() : "HD";
 
-                // Size එක සෙවීම (GB / MB)
                 const sMatch = fullText.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
                 const size = sMatch ? sMatch[0] : "N/A";
 
-                const name = `🎥 [Cinesubz Movie] - ${quality} (${size})`;
-
-                if (!downloads.some(d => d.link === href)) {
-                    downloads.push({
-                        name: name,
-                        quality: quality,
-                        size: size,
-                        link: href
-                    });
+                if (!ztLinks.some(z => z.ztUrl === href)) {
+                    ztLinks.push({ quality, size, ztUrl: href });
                 }
             }
         });
+
+        // Resolve Final Download Links from zt-links
+        const downloads = [];
+        for (const item of ztLinks) {
+            try {
+                // 1. Visit zt-link page
+                const ztRes = await axios.get(item.ztUrl, { headers: HEADERS, timeout: 5000 });
+                const $zt = cheerio.load(ztRes.data);
+                
+                // Find "Go to Download Page" link (usually csplayer or direct)
+                let downloadPageUrl = $zt('a:contains("Go to Download Page")').attr('href') \vert{}\vert{} $zt('a.btn').attr('href') || '';
+
+                if (downloadPageUrl) {
+                    // 2. Visit final download page (csplayer2.space etc.)
+                    const finalRes = await axios.get(downloadPageUrl, { headers: HEADERS, timeout: 5000 });
+                    const $final = cheerio.load(finalRes.data);
+
+                    $final('a').each((i, el) => {
+                        const link = $final(el).attr('href') || '';
+                        const btnText = $final(el).text().trim();
+
+                        if (link && (link.includes('download') || link.includes('t.me') || link.includes('pixeldrain') || link.includes('mega') || link.startsWith('http'))) {
+                            if (!link.includes('cinesubz.net') && !link.includes('javascript')) {
+                                downloads.push({
+                                    name: `${btnText} - ${item.quality} (${item.size})`,
+                                    quality: item.quality,
+                                    size: item.size,
+                                    direct_link: link
+                                });
+                            }
+                        }
+                    });
+                } else {
+                    // Fallback to ztUrl if redirection page not found
+                    downloads.push({
+                        name: `Download Link - ${item.quality} (${item.size})`,
+                        quality: item.quality,
+                        size: item.size,
+                        direct_link: item.ztUrl
+                    });
+                }
+            } catch (e) {
+                // If nested fetching fails, fallback to ztUrl
+                downloads.push({
+                    name: `Download Link - ${item.quality} (${item.size})`,
+                    quality: item.quality,
+                    size: item.size,
+                    direct_link: item.ztUrl
+                });
+            }
+        }
 
         res.json({
             status: true,
