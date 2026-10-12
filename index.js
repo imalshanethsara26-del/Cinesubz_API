@@ -24,7 +24,7 @@ app.get('/', (req, res) => {
     });
 });
 
-// Search Endpoint (කිසිදු වෙනසක් කර නැත)
+// Search Endpoint
 app.get('/api/v1/cinesubz/search', async (req, res) => {
     try {
         const query = req.query.q;
@@ -78,7 +78,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         // Image
         let image = $('meta[property="og:image"]').attr('content');
-        if (!image) image = $('.poster img, .single-poster img, .entry-content img').first().attr('src') || '';
+        if (!image) image = $('.poster img, .single-poster img, .entry-content img').first().attr('src'] || '';
 
         // IMDb
         let imdb_rating = $('.imdb-rate, .rating, .score, span[itemprop="ratingValue"]').first().text().trim();
@@ -127,7 +127,15 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 const ztRes = await axios.get(item.ztUrl, { headers: HEADERS, timeout: 5000 });
                 const $zt = cheerio.load(ztRes.data);
                 
-                let downloadPageUrl = $zt('a:contains("Go to Download Page")').attr('href') \vert{}\vert{} $zt('a.btn').attr('href') || '';
+                let downloadPageUrl = '';
+                const link1 = $zt('a:contains("Go to Download Page")').attr('href');
+                const link2 = $zt('a.btn').attr('href');
+                
+                if (link1) {
+                    downloadPageUrl = link1;
+                } else if (link2) {
+                    downloadPageUrl = link2;
+                }
 
                 if (downloadPageUrl) {
                     const finalRes = await axios.get(downloadPageUrl, { headers: HEADERS, timeout: 5000 });
