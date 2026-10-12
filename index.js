@@ -143,7 +143,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         });
 
-        // Downloads Extraction (zt-links හරහා ගොස් PixelDrain, Direct Servers සහ Telegram Bots ලබා ගැනීම)
+        // Downloads Extraction
         const downloads = [];
         const ztLinksToFetch = [];
 
@@ -166,25 +166,38 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         for (const item of ztLinksToFetch) {
             try {
                 const ztRes = await axios.get(item.url, { headers: HEADERS, timeout: 15000 });
-                const $zt = cheerio.load(ztRes.data);
+                const ztHtml = ztRes.data;
+                const $zt = cheerio.load(ztHtml);
                 
                 let redirectUrl = '';
                 $zt('a').each((i, el) => {
                     let h = $zt(el).attr('href');
                     if (!h) h = '';
-                    if (h && !h.includes('cinesubz.net') && h.startsWith('http')) {
+                    if (h && !h.includes('cinesubz.net') && (h.startsWith('http') || h.startsWith('//'))) {
+                        if (h.startsWith('//')) h = 'https:' + h;
                         redirectUrl = h;
                     }
                 });
 
+                if (!redirectUrl) {
+                    const urlRegex = /https?:\/\/[^\s"'<>]+\b(?:space|redirect|dl|download|player|go)[^\s"'<>]*/gi;
+                    const matches = ztHtml.match(urlRegex);
+                    if (matches) {
+                        const valid = matches.filter(m => !m.includes('cinesubz.net'));
+                        if (valid.length > 0) redirectUrl = valid[0];
+                    }
+                }
+
                 if (redirectUrl) {
                     const finalRes = await axios.get(redirectUrl, { headers: HEADERS, timeout: 15000 });
-                    const $final = cheerio.load(finalRes.data);
+                    const finalHtml = finalRes.data;
+                    const $final = cheerio.load(finalHtml);
 
+                    // 1. Scrape <a> tags
                     $final('a').each((i, el) => {
                         let link = $final(el).attr('href');
                         if (!link) link = '';
-                        const text = $final(el).text().trim();
+                        if (link.startsWith('//')) link = 'https:' + link;
 
                         if (link && !link.includes('cinesubz.net') && !link.includes('CineSubzAdmin') && !link.includes('javascript')) {
                             let type = "Direct Server";
@@ -207,10 +220,52 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                             }
                         }
                     });
+
+                    // 2. Scrape via Regex on final page HTML/Scripts for Pixeldrain / Direct links
+                    const linkRegex = /https?:\/\/[^\s"'<>]+\b(?:pixeldrain|mega|drive|download|file|stream|get|space|kdrive)[^\s"'<>]*/gi;
+                    const regexMatches = finalHtml.match(linkRegex);
+                    if (regexMatches) {
+                        regexMatches.forEach(l => {
+                            if (!l.includes('cinesubz.net') && !l.includes('CineSubzAdmin')) {
+                                let type = "Direct Server";
+                                if (l.includes('pixeldrain')) type = "PixelDrain";
+                                else if (l.includes('space') || l.includes('kdrive')) type = "Direct High-Speed Server";
+                                else if (l.includes('telegram') || l.includes('t.me')) type = "Telegram Bot";
+
+                                let downloadName = item.quality + " [" + type + "]";
+                                if (!downloads.some(d => d.link === l)) {
+                                    downloads.push({
+                                        quality: downloadName,
+                                        size: item.size,
+                                        language: "English",
+                                        link: l
+                                    });
+                                }
+                            }
+                        });
+                    }
                 }
             } catch (err) {
                 // Ignore nested error
             }
+        }
+
+        // Fallback: If downloads array is empty, grab any direct links from main movie page
+        if (downloads.length === 0) {
+            $('a').each((i, el) => {
+                let href = $(el).attr('href');
+                if (!href) href = '';
+                if (href.startsWith('//')) href = 'https:' + href;
+
+                if (href && (href.includes('pixeldrain') || href.includes('supercloud') || href.includes('space')) && !href.includes('cinesubz.net')) {
+                    downloads.push({
+                        quality: "WEB-DL [Direct Server]",
+                        size: "N/A",
+                        language: "English",
+                        link: href
+                    });
+                }
+            });
         }
 
         res.json({
