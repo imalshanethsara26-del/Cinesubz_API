@@ -24,7 +24,7 @@ app.get('/', (req, res) => {
     });
 });
 
-// Search Endpoint for Cinesubz
+// Search Endpoint for Cinesubz (Filtered for Movies & TV Shows)
 app.get('/api/v1/cinesubz/search', async (req, res) => {
     try {
         const query = req.query.q;
@@ -35,7 +35,6 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
         const $ = cheerio.load(response.data);
         const results = [];
 
-        // Cinesubz සර්ච් ප්‍රතිඵල ලබා ගැනීම සඳහා පරීක්ෂා කිරීම
         $('a').each((i, el) => {
             const href = $(el).attr('href') || '';
             const parent = $(el).closest('article, .post, .item, div');
@@ -49,8 +48,8 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
             if (!img) img = parent.find('img').attr('src');
             if (!img) img = parent.find('img').attr('data-src') || '';
 
-            // Cinesubz මූවි ලින්ක්ස් ෆිල්ටර් කිරීම
-            if (href.includes('cinesubz.net') && !href.includes('/?s=') && title.length > 2) {
+            // movies සහ tvshows පමණක් ෆිල්ටර් කර ගැනීම
+            if (href.includes('cinesubz.net') && (href.includes('/movies/') || href.includes('/tvshows/')) && title.length > 2) {
                 title = title.replace(/\t|\n/g, '').trim();
                 if (!results.some(r => r.link === href)) {
                     results.push({ title, image: img, link: href });
