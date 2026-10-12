@@ -62,7 +62,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Info & Download Endpoint (zt-links සහ redirect වෙබ් හරහා අවසාන ඩවුන්ලෝඩ් ලින්ක්ස් ලබා ගැනීමට සකසා ඇත)
+// Info & Download Endpoint (zt-links සහ csplayer හරහා සැබෑ ඩිරෙක්ට් ලින්ක්ස් ලබා ගැනීම)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     try {
         const movieUrl = req.query.url;
@@ -136,25 +136,27 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 
                 let redirectUrl = '';
 
-                // Look for the destination link in <a> tags
+                // Look for "Go to Download Page" button link
                 $zt('a').each((i, el) => {
                     const href = $zt(el).attr('href') || '';
-                    if (href && !href.includes('cinesubz.net') && !href.includes('javascript') && !href.includes('#')) {
-                        redirectUrl = href;
+                    const btnText = $zt(el).text().trim();
+                    if (href && (btnText.includes('Download Page') || href.includes('space') || href.includes('redirect'))) {
+                        if (!href.includes('cinesubz.net') && !href.includes('javascript') && !href.includes('#')) {
+                            redirectUrl = href;
+                        }
                     }
                 });
 
-                // If not found in <a> tags, search via Regex in script/HTML
                 if (!redirectUrl) {
-                    const urlRegex = /https?:\/\/[^\s"'<>]+\b(?:space|redirect|dl|download|player)[^\s"'<>]*/gi;
-                    const matches = ztHtml.match(urlRegex);
-                    if (matches) {
-                        const valid = matches.filter(m => !m.includes('cinesubz.net'));
-                        if (valid.length > 0) redirectUrl = valid[0];
-                    }
+                    $zt('a').each((i, el) => {
+                        const href = $zt(el).attr('href') || '';
+                        if (href && !href.includes('cinesubz.net') && !href.includes('javascript') && !href.includes('#')) {
+                            redirectUrl = href;
+                        }
+                    });
                 }
 
-                // 2. If redirect page found (e.g. csplayer2.space), fetch it to get final download links!
+                // 2. Fetch final redirect page (csplayer2.space)
                 if (redirectUrl) {
                     const finalRes = await axios.get(redirectUrl, { headers: HEADERS, timeout: 20000 });
                     const finalHtml = finalRes.data;
@@ -164,10 +166,11 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         const link = $final(el).attr('href') || '';
                         const btnText = $final(el).text().trim();
 
-                        if (link && (link.includes('download') || link.includes('t.me') || link.includes('pixeldrain') || link.includes('mega') || link.startsWith('http'))) {
-                            if (!link.includes('cinesubz.net') && !link.includes('javascript') && !link.includes('#')) {
+                        // Filter out admin telegram/spam links and keep actual direct download links
+                        if (link && !link.includes('cinesubz.net') && !link.includes('javascript') && !link.includes('#') && !link.includes('CineSubzAdmin')) {
+                            if (btnText.toLowerCase().includes('direct') || btnText.toLowerCase().includes('download') || link.includes('pixeldrain') || link.includes('mega') || link.includes('drive')) {
                                 downloads.push({
-                                    name: `${btnText || 'Direct Download'} - ${item.quality} (${item.size})`,
+                                    name: `${btnText} - ${item.quality} (${item.size})`,
                                     quality: item.quality,
                                     size: item.size,
                                     direct_link: link
@@ -178,7 +181,6 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     });
                 }
 
-                // Fallback if specific links weren't parsed from final page
                 if (!linkResolved) {
                     downloads.push({
                         name: `Download Link - ${item.quality} (${item.size})`,
