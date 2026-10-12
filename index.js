@@ -62,7 +62,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Info & Download Endpoint (zt-links සහ csplayer හරහා සැබෑ ඩිරෙක්ට් ලින්ක්ස් ලබා ගැනීම)
+// Info & Download Endpoint (Direct download links පමණක් නිවැරදිව ලබා ගැනීමට සකසා ඇත)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     try {
         const movieUrl = req.query.url;
@@ -129,7 +129,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         for (const item of ztLinks) {
             let linkResolved = false;
             try {
-                // 1. Fetch zt-link page (Timeout 20 seconds)
+                // 1. Fetch zt-link page
                 const ztRes = await axios.get(item.ztUrl, { headers: HEADERS, timeout: 20000 });
                 const ztHtml = ztRes.data;
                 const $zt = cheerio.load(ztHtml);
@@ -156,7 +156,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     });
                 }
 
-                // 2. Fetch final redirect page (csplayer2.space)
+                // 2. Fetch final redirect page (csplayer2.space) and extract Direct Download links
                 if (redirectUrl) {
                     const finalRes = await axios.get(redirectUrl, { headers: HEADERS, timeout: 20000 });
                     const finalHtml = finalRes.data;
@@ -166,9 +166,9 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         const link = $final(el).attr('href') || '';
                         const btnText = $final(el).text().trim();
 
-                        // Filter out admin telegram/spam links and keep actual direct download links
-                        if (link && !link.includes('cinesubz.net') && !link.includes('javascript') && !link.includes('#') && !link.includes('CineSubzAdmin')) {
-                            if (btnText.toLowerCase().includes('direct') || btnText.toLowerCase().includes('download') || link.includes('pixeldrain') || link.includes('mega') || link.includes('drive')) {
+                        // Telegram හෝ Admin ලින්ක්ස් සම්පූර්ණයෙන්ම ඉවත් කර Direct Download ලින්ක්ස් පමණක් ලබා ගැනීම
+                        if (link && !link.includes('cinesubz.net') && !link.includes('javascript') && !link.includes('#') && !link.includes('t.me') && !link.includes('telegram.org') && !link.includes('CineSubzAdmin')) {
+                            if (btnText.toLowerCase().includes('direct') || btnText.toLowerCase().includes('download') || link.includes('pixeldrain') || link.includes('mega') || link.includes('drive') || link.includes('file')) {
                                 downloads.push({
                                     name: `${btnText} - ${item.quality} (${item.size})`,
                                     quality: item.quality,
