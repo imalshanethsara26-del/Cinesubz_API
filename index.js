@@ -24,7 +24,7 @@ app.get('/', (req, res) => {
     });
 });
 
-// Search Endpoint (වෙනස් කර නැත)
+// Search Endpoint (කිසිදු වෙනසක් කර නැත)
 app.get('/api/v1/cinesubz/search', async (req, res) => {
     try {
         const query = req.query.q;
@@ -62,7 +62,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Info & Download Endpoint (අවසාන ඩිරෙක්ට් ලින්ක්ස් වෙනකම්ම ස්ක්‍රේප් කරන ලෙස සකසා ඇත)
+// Info & Download Endpoint
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     try {
         const movieUrl = req.query.url;
@@ -124,15 +124,12 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         const downloads = [];
         for (const item of ztLinks) {
             try {
-                // 1. Visit zt-link page
                 const ztRes = await axios.get(item.ztUrl, { headers: HEADERS, timeout: 5000 });
                 const $zt = cheerio.load(ztRes.data);
                 
-                // Find "Go to Download Page" link (usually csplayer or direct)
                 let downloadPageUrl = $zt('a:contains("Go to Download Page")').attr('href') \vert{}\vert{} $zt('a.btn').attr('href') || '';
 
                 if (downloadPageUrl) {
-                    // 2. Visit final download page (csplayer2.space etc.)
                     const finalRes = await axios.get(downloadPageUrl, { headers: HEADERS, timeout: 5000 });
                     const $final = cheerio.load(finalRes.data);
 
@@ -152,7 +149,6 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         }
                     });
                 } else {
-                    // Fallback to ztUrl if redirection page not found
                     downloads.push({
                         name: `Download Link - ${item.quality} (${item.size})`,
                         quality: item.quality,
@@ -161,7 +157,6 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     });
                 }
             } catch (e) {
-                // If nested fetching fails, fallback to ztUrl
                 downloads.push({
                     name: `Download Link - ${item.quality} (${item.size})`,
                     quality: item.quality,
