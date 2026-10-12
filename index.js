@@ -62,7 +62,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Info & Download Endpoint (zt-links සහ csplayer හරහා සැබෑ ඩිරෙක්ට් ලින්ක්ස් සියල්ල මخراج කර ගැනීමට සකසා ඇත)
+// Info & Download Endpoint (දෝෂය නිවැරදි කර ඇත)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     try {
         const movieUrl = req.query.url;
@@ -136,9 +136,9 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 
                 let redirectUrl = '';
 
-                // Find redirect link from zt page
+                // Find redirect link from zt page (නිවැරදි කරන ලදී)
                 $zt('a').each((i, el) => {
-                    const href = $zt(el).attr('href'] || '';
+                    const href = $zt(el).attr('href') || '';
                     if (href && !href.includes('cinesubz.net') && !href.includes('javascript') && !href.includes('#') && href.startsWith('http')) {
                         redirectUrl = href;
                     }
@@ -165,7 +165,6 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         const btnText = $final(el).text().trim();
 
                         if (link && !link.includes('cinesubz.net') && !link.includes('javascript') && !link.includes('#')) {
-                            // Exclude admin/spam, include direct download links or pixeldrain/mega/drive/etc.
                             if (!link.includes('CineSubzAdmin')) {
                                 resolvedLinks.push({
                                     name: `${btnText || 'Direct Download'} - ${item.quality} (${item.size})`,
