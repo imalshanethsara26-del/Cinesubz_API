@@ -1,8 +1,0 @@
-fastapi
-uvicorn
-playwright
-beautifulsoup4
-requests
-pydantic
-pyngrok
-nest-asyncio
