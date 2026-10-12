@@ -24,14 +24,14 @@ app.get('/', (req, res) => {
     });
 });
 
-// Search Endpoint
+// Search Endpoint (කිසිදු වෙනසක් කර නැත)
 app.get('/api/v1/cinesubz/search', async (req, res) => {
     try {
         const query = req.query.q;
         if (!query) return res.status(400).json({ status: false, message: "Search term required" });
 
         const searchUrl = "https://cinesubz.net/?s=" + encodeURIComponent(query);
-        const response = await axios.get(searchUrl, { headers: HEADERS, timeout: 10000 });
+        const response = await axios.get(searchUrl, { headers: HEADERS, timeout: 15000 });
         const $ = cheerio.load(response.data);
         const results = [];
 
@@ -62,13 +62,13 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Info & Download Endpoint
+// Info & Download Endpoint (zt-links සහ redirect වෙබ් හරහා අවසාන ඩවුන්ලෝඩ් ලින්ක්ස් ලබා ගැනීමට සකසා ඇත)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     try {
         const movieUrl = req.query.url;
         if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
-        const response = await axios.get(movieUrl, { headers: HEADERS, timeout: 10000 });
+        const response = await axios.get(movieUrl, { headers: HEADERS, timeout: 15000 });
         const $ = cheerio.load(response.data);
 
         // Title
@@ -76,7 +76,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         if (!title) title = $('h1').first().text().trim();
         if (!title) title = $('title').text().trim();
 
-        // Image (నిවැරදි කරන ලදී)
+        // Image
         let image = $('meta[property="og:image"]').attr('content');
         if (!image) {
             const imgAttr = $('.poster img, .single-poster img, .entry-content img').first().attr('src');
@@ -123,50 +123,71 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         });
 
-        // Resolve Final Download Links from zt-links
         const downloads = [];
+
+        // Traverse through zt-links and final redirect pages
         for (const item of ztLinks) {
+            let linkResolved = false;
             try {
-                const ztRes = await axios.get(item.ztUrl, { headers: HEADERS, timeout: 5000 });
-                const $zt = cheerio.load(ztRes.data);
+                // 1. Fetch zt-link page (Timeout 20 seconds)
+                const ztRes = await axios.get(item.ztUrl, { headers: HEADERS, timeout: 20000 });
+                const ztHtml = ztRes.data;
+                const $zt = cheerio.load(ztHtml);
                 
-                let downloadPageUrl = '';
-                const link1 = $zt('a:contains("Go to Download Page")').attr('href');
-                const link2 = $zt('a.btn').attr('href');
-                
-                if (link1) {
-                    downloadPageUrl = link1;
-                } else if (link2) {
-                    downloadPageUrl = link2;
+                let redirectUrl = '';
+
+                // Look for the destination link in <a> tags
+                $zt('a').each((i, el) => {
+                    const href = $zt(el).attr('href') || '';
+                    if (href && !href.includes('cinesubz.net') && !href.includes('javascript') && !href.includes('#')) {
+                        redirectUrl = href;
+                    }
+                });
+
+                // If not found in <a> tags, search via Regex in script/HTML
+                if (!redirectUrl) {
+                    const urlRegex = /https?:\/\/[^\s"'<>]+\b(?:space|redirect|dl|download|player)[^\s"'<>]*/gi;
+                    const matches = ztHtml.match(urlRegex);
+                    if (matches) {
+                        const valid = matches.filter(m => !m.includes('cinesubz.net'));
+                        if (valid.length > 0) redirectUrl = valid[0];
+                    }
                 }
 
-                if (downloadPageUrl) {
-                    const finalRes = await axios.get(downloadPageUrl, { headers: HEADERS, timeout: 5000 });
-                    const $final = cheerio.load(finalRes.data);
+                // 2. If redirect page found (e.g. csplayer2.space), fetch it to get final download links!
+                if (redirectUrl) {
+                    const finalRes = await axios.get(redirectUrl, { headers: HEADERS, timeout: 20000 });
+                    const finalHtml = finalRes.data;
+                    const $final = cheerio.load(finalHtml);
 
                     $final('a').each((i, el) => {
                         const link = $final(el).attr('href') || '';
                         const btnText = $final(el).text().trim();
 
                         if (link && (link.includes('download') || link.includes('t.me') || link.includes('pixeldrain') || link.includes('mega') || link.startsWith('http'))) {
-                            if (!link.includes('cinesubz.net') && !link.includes('javascript')) {
+                            if (!link.includes('cinesubz.net') && !link.includes('javascript') && !link.includes('#')) {
                                 downloads.push({
-                                    name: `${btnText} - ${item.quality} (${item.size})`,
+                                    name: `${btnText || 'Direct Download'} - ${item.quality} (${item.size})`,
                                     quality: item.quality,
                                     size: item.size,
                                     direct_link: link
                                 });
+                                linkResolved = true;
                             }
                         }
                     });
-                } else {
+                }
+
+                // Fallback if specific links weren't parsed from final page
+                if (!linkResolved) {
                     downloads.push({
                         name: `Download Link - ${item.quality} (${item.size})`,
                         quality: item.quality,
                         size: item.size,
-                        direct_link: item.ztUrl
+                        direct_link: redirectUrl || item.ztUrl
                     });
                 }
+
             } catch (e) {
                 downloads.push({
                     name: `Download Link - ${item.quality} (${item.size})`,
