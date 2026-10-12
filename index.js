@@ -82,7 +82,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         const html = response.data;
         const $ = cheerio.load(html);
 
-        // Title (නියම මූවි නම ලබා ගැනීම)
+        // Title
         let title = $('meta[property="og:title"]').attr('content');
         if (!title) title = $('h1.entry-title').text().trim();
         if (!title) title = $('h1').first().text().trim();
@@ -143,7 +143,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         });
 
-        // Downloads Extraction (zt-links හරහා ගොස් Direct/PixelDrain ලින්ක්ස් පමණක් ලබා ගැනීම)
+        // Downloads Extraction (zt-links හරහා ගොස් PixelDrain, Direct Servers සහ Telegram Bots ලබා ගැනීම)
         const downloads = [];
         const ztLinksToFetch = [];
 
@@ -151,8 +151,8 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             let href = $(el).attr('href');
             if (!href) href = '';
 
+            const text = $(el).text() + ' ' + $(el).parent().text();
             if (href.includes('/zt-links/')) {
-                const text = $(el).text() + ' ' + $(el).parent().text();
                 const qMatch = text.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|HDRip)/i);
                 const sMatch = text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
                 ztLinksToFetch.push({
@@ -165,7 +165,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         for (const item of ztLinksToFetch) {
             try {
-                const ztRes = await axios.get(item.url, { headers: HEADERS, timeout: 10000 });
+                const ztRes = await axios.get(item.url, { headers: HEADERS, timeout: 15000 });
                 const $zt = cheerio.load(ztRes.data);
                 
                 let redirectUrl = '';
@@ -178,7 +178,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 });
 
                 if (redirectUrl) {
-                    const finalRes = await axios.get(redirectUrl, { headers: HEADERS, timeout: 10000 });
+                    const finalRes = await axios.get(redirectUrl, { headers: HEADERS, timeout: 15000 });
                     const $final = cheerio.load(finalRes.data);
 
                     $final('a').each((i, el) => {
@@ -186,11 +186,15 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         if (!link) link = '';
                         const text = $final(el).text().trim();
 
-                        // Telegram සහ Spam ලින්ක්ස් සම්පූර්ණයෙන්ම පෙරළා ඉවත් කිරීම
-                        if (link && !link.includes('cinesubz.net') && !link.includes('t.me') && !link.includes('telegram') && !link.includes('CineSubzAdmin') && !link.includes('javascript')) {
+                        if (link && !link.includes('cinesubz.net') && !link.includes('CineSubzAdmin') && !link.includes('javascript')) {
                             let type = "Direct Server";
-                            if (link.includes('pixeldrain')) type = "PixelDrain";
-                            else if (link.includes('space') || link.includes('kdrive')) type = "Direct High-Speed Server";
+                            if (link.includes('pixeldrain')) {
+                                type = "PixelDrain";
+                            } else if (link.includes('telegram') || link.includes('t.me') || link.includes('telegram.me')) {
+                                type = "Telegram Bot";
+                            } else if (link.includes('space') || link.includes('kdrive')) {
+                                type = "Direct High-Speed Server";
+                            }
 
                             let downloadName = item.quality + " [" + type + "]";
                             if (!downloads.some(d => d.link === link)) {
