@@ -62,7 +62,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Info & Download Endpoint (Direct download links පමණක් නිවැරදිව ලබා ගැනීමට සකසා ඇත)
+// Info & Download Endpoint (zt-links සහ csplayer හරහා සැබෑ ඩිරෙක්ට් ලින්ක්ස් සියල්ල මخراج කර ගැනීමට සකසා ඇත)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     try {
         const movieUrl = req.query.url;
@@ -127,61 +127,77 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         // Traverse through zt-links and final redirect pages
         for (const item of ztLinks) {
-            let linkResolved = false;
+            let resolvedLinks = [];
             try {
-                // 1. Fetch zt-link page
+                // 1. Fetch zt-link page (Timeout 20s)
                 const ztRes = await axios.get(item.ztUrl, { headers: HEADERS, timeout: 20000 });
                 const ztHtml = ztRes.data;
                 const $zt = cheerio.load(ztHtml);
                 
                 let redirectUrl = '';
 
-                // Look for "Go to Download Page" button link
+                // Find redirect link from zt page
                 $zt('a').each((i, el) => {
-                    const href = $zt(el).attr('href') || '';
-                    const btnText = $zt(el).text().trim();
-                    if (href && (btnText.includes('Download Page') || href.includes('space') || href.includes('redirect'))) {
-                        if (!href.includes('cinesubz.net') && !href.includes('javascript') && !href.includes('#')) {
-                            redirectUrl = href;
-                        }
+                    const href = $zt(el).attr('href'] || '';
+                    if (href && !href.includes('cinesubz.net') && !href.includes('javascript') && !href.includes('#') && href.startsWith('http')) {
+                        redirectUrl = href;
                     }
                 });
 
                 if (!redirectUrl) {
-                    $zt('a').each((i, el) => {
-                        const href = $zt(el).attr('href') || '';
-                        if (href && !href.includes('cinesubz.net') && !href.includes('javascript') && !href.includes('#')) {
-                            redirectUrl = href;
-                        }
-                    });
+                    const urlRegex = /https?:\/\/[^\s"'<>]+\b(?:space|redirect|dl|download|player|go)[^\s"'<>]*/gi;
+                    const matches = ztHtml.match(urlRegex);
+                    if (matches) {
+                        const valid = matches.filter(m => !m.includes('cinesubz.net'));
+                        if (valid.length > 0) redirectUrl = valid[0];
+                    }
                 }
 
-                // 2. Fetch final redirect page (csplayer2.space) and extract Direct Download links
+                // 2. Fetch final redirect page (csplayer2.space)
                 if (redirectUrl) {
                     const finalRes = await axios.get(redirectUrl, { headers: HEADERS, timeout: 20000 });
                     const finalHtml = finalRes.data;
                     const $final = cheerio.load(finalHtml);
 
+                    // Check all <a> tags on final page
                     $final('a').each((i, el) => {
                         const link = $final(el).attr('href') || '';
                         const btnText = $final(el).text().trim();
 
-                        // Telegram හෝ Admin ලින්ක්ස් සම්පූර්ණයෙන්ම ඉවත් කර Direct Download ලින්ක්ස් පමණක් ලබා ගැනීම
-                        if (link && !link.includes('cinesubz.net') && !link.includes('javascript') && !link.includes('#') && !link.includes('t.me') && !link.includes('telegram.org') && !link.includes('CineSubzAdmin')) {
-                            if (btnText.toLowerCase().includes('direct') || btnText.toLowerCase().includes('download') || link.includes('pixeldrain') || link.includes('mega') || link.includes('drive') || link.includes('file')) {
-                                downloads.push({
-                                    name: `${btnText} - ${item.quality} (${item.size})`,
+                        if (link && !link.includes('cinesubz.net') && !link.includes('javascript') && !link.includes('#')) {
+                            // Exclude admin/spam, include direct download links or pixeldrain/mega/drive/etc.
+                            if (!link.includes('CineSubzAdmin')) {
+                                resolvedLinks.push({
+                                    name: `${btnText || 'Direct Download'} - ${item.quality} (${item.size})`,
                                     quality: item.quality,
                                     size: item.size,
                                     direct_link: link
                                 });
-                                linkResolved = true;
                             }
                         }
                     });
+
+                    // If <a> tags didn't give links, search via Regex in final HTML/Scripts
+                    if (resolvedLinks.length === 0) {
+                        const linkRegex = /https?:\/\/[^\s"'<>]+\b(?:pixeldrain|mega|drive|download|file|stream|get)[^\s"'<>]*/gi;
+                        const matches = finalHtml.match(linkRegex);
+                        if (matches) {
+                            const valid = matches.filter(m => !m.includes('cinesubz.net') && !m.includes('CineSubzAdmin'));
+                            valid.forEach((l, idx) => {
+                                resolvedLinks.push({
+                                    name: `Direct Download ${idx + 1} - ${item.quality} (${item.size})`,
+                                    quality: item.quality,
+                                    size: item.size,
+                                    direct_link: l
+                                });
+                            });
+                        }
+                    }
                 }
 
-                if (!linkResolved) {
+                if (resolvedLinks.length > 0) {
+                    downloads.push(...resolvedLinks);
+                } else {
                     downloads.push({
                         name: `Download Link - ${item.quality} (${item.size})`,
                         quality: item.quality,
