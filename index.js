@@ -42,33 +42,19 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
 
         $('a').each((i, el) => {
             let href = $(el).attr('href');
-            if (!href) {
-                href = '';
-            }
+            if (!href) href = '';
             
             const parent = $(el).closest('article, .post, .item, div');
             
             let title = $(el).find('h2, h3, .title').text().trim();
-            if (!title) {
-                title = $(el).attr('title');
-            }
-            if (!title) {
-                title = $(el).text().trim();
-            }
+            if (!title) title = $(el).attr('title');
+            if (!title) title = $(el).text().trim();
 
             let img = $(el).find('img').attr('src');
-            if (!img) {
-                img = $(el).find('img').attr('data-src');
-            }
-            if (!img) {
-                img = parent.find('img').attr('src');
-            }
-            if (!img) {
-                img = parent.find('img').attr('data-src');
-            }
-            if (!img) {
-                img = '';
-            }
+            if (!img) img = $(el).find('img').attr('data-src');
+            if (!img) img = parent.find('img').attr('src');
+            if (!img) img = parent.find('img').attr('data-src');
+            if (!img) img = '';
 
             if (href.includes('cinesubz.net') && (href.includes('/movies/') || href.includes('/tvshows/')) && title.length > 2) {
                 title = title.replace(/\t|\n/g, '').trim();
@@ -96,10 +82,12 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         const html = response.data;
         const $ = cheerio.load(html);
 
-        // Title
-        let title = $('h1.entry-title').text().trim();
+        // Title (නියම මූවි නම ලබා ගැනීම)
+        let title = $('meta[property="og:title"]').attr('content');
+        if (!title) title = $('h1.entry-title').text().trim();
         if (!title) title = $('h1').first().text().trim();
         if (!title) title = $('title').text().trim();
+        if (!title) title = "Unknown Movie";
 
         // Image
         let image = $('meta[property="og:image"]').attr('content');
@@ -108,7 +96,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             image = imgAttr ? imgAttr : '';
         }
 
-        // Quality, Rating, Director, etc.
+        // Quality, Rating, Director
         let quality = $('.quality, .movie-quality').text().trim();
         if (!quality) quality = "WEB-DL";
 
@@ -155,45 +143,10 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         });
 
-        // Downloads Extraction
+        // Downloads Extraction (zt-links හරහා ගොස් Direct/PixelDrain ලින්ක්ස් පමණක් ලබා ගැනීම)
         const downloads = [];
-
-        // 1. First check direct download buttons on the main movie page
-        $('a').each((i, el) => {
-            let href = $(el).attr('href');
-            if (!href) href = '';
-
-            const btnText = $(el).text().trim();
-            const parentText = $(el).parent().text().replace(/\s+/g, ' ').trim();
-            const fullText = btnText + ' ' + parentText;
-
-            if (href && (href.includes('pixeldrain') || href.includes('mega') || href.includes('telegram.me') || href.includes('t.me') || href.includes('supercloud') || href.includes('space') || href.includes('/zt-links/'))) {
-                if (!href.includes('cinesubz.net') && !href.includes('javascript') && !href.includes('#')) {
-                    const qMatch = fullText.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|HDRip)/i);
-                    let qName = qMatch ? qMatch[0].toUpperCase() : "WEB-DL";
-
-                    const sMatch = fullText.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
-                    let size = sMatch ? sMatch[0] : "N/A";
-
-                    let type = "Direct Server";
-                    if (href.includes('pixeldrain')) type = "PixelDrain";
-                    else if (href.includes('telegram') || href.includes('t.me')) type = "Telegram Bot";
-                    else if (href.includes('space') || href.includes('kdrive')) type = "Direct High-Speed Server";
-
-                    if (!downloads.some(d => d.link === href)) {
-                        downloads.push({
-                            quality: qName + " [" + type + "]",
-                            size: size,
-                            language: "English",
-                            link: href
-                        });
-                    }
-                }
-            }
-        });
-
-        // 2. If zt-links exist, fetch them to grab underlying direct/pixel/telegram links
         const ztLinksToFetch = [];
+
         $('a').each((i, el) => {
             let href = $(el).attr('href');
             if (!href) href = '';
@@ -233,14 +186,16 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         if (!link) link = '';
                         const text = $final(el).text().trim();
 
-                        if (link && !link.includes('cinesubz.net') && !link.includes('CineSubzAdmin') && !link.includes('javascript')) {
+                        // Telegram සහ Spam ලින්ක්ස් සම්පූර්ණයෙන්ම පෙරළා ඉවත් කිරීම
+                        if (link && !link.includes('cinesubz.net') && !link.includes('t.me') && !link.includes('telegram') && !link.includes('CineSubzAdmin') && !link.includes('javascript')) {
                             let type = "Direct Server";
                             if (link.includes('pixeldrain')) type = "PixelDrain";
-                            else if (link.includes('telegram') || link.includes('t.me')) type = "Telegram Bot";
+                            else if (link.includes('space') || link.includes('kdrive')) type = "Direct High-Speed Server";
 
+                            let downloadName = item.quality + " [" + type + "]";
                             if (!downloads.some(d => d.link === link)) {
                                 downloads.push({
-                                    quality: item.quality + " [" + type + "]",
+                                    quality: downloadName,
                                     size: item.size,
                                     language: "English",
                                     link: link
@@ -250,7 +205,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     });
                 }
             } catch (err) {
-                // Ignore nested fetch error
+                // Ignore nested error
             }
         }
 
