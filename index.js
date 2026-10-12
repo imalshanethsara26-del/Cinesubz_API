@@ -76,9 +76,12 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         if (!title) title = $('h1').first().text().trim();
         if (!title) title = $('title').text().trim();
 
-        // Image
+        // Image (నిවැරදි කරන ලදී)
         let image = $('meta[property="og:image"]').attr('content');
-        if (!image) image = $('.poster img, .single-poster img, .entry-content img').first().attr('src'] || '';
+        if (!image) {
+            const imgAttr = $('.poster img, .single-poster img, .entry-content img').first().attr('src');
+            image = imgAttr || '';
+        }
 
         // IMDb
         let imdb_rating = $('.imdb-rate, .rating, .score, span[itemprop="ratingValue"]').first().text().trim();
