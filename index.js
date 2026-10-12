@@ -24,7 +24,7 @@ app.get('/', (req, res) => {
     });
 });
 
-// Search Endpoint (කිසිදු වෙනසක් කර නැත)
+// Search Endpoint
 app.get('/api/v1/cinesubz/search', async (req, res) => {
     try {
         const query = req.query.q;
@@ -62,14 +62,15 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Info & Download Endpoint (දෝෂය නිවැරදි කර ඇත)
+// Info & Download Endpoint (ඔයා දුන්න වැඩ කරන API එකේ ක්‍රමයට සකස් කරන ලදී)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     try {
         const movieUrl = req.query.url;
         if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
-        const response = await axios.get(movieUrl, { headers: HEADERS, timeout: 15000 });
-        const $ = cheerio.load(response.data);
+        const response = await axios.get(movieUrl, { headers: HEADERS, timeout: 20000 });
+        const html = response.data;
+        const $ = cheerio.load(html);
 
         // Title
         let title = $('h1.entry-title').text().trim();
@@ -83,14 +84,13 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             image = imgAttr || '';
         }
 
-        // IMDb
-        let imdb_rating = $('.imdb-rate, .rating, .score, span[itemprop="ratingValue"]').first().text().trim();
-        if (!imdb_rating) {
-            const pageText = $.text();
-            const match = pageText.match(/IMDb\s*:?\s*([\d\.]+(\/10)?)/i);
-            if (match) imdb_rating = match[1];
-        }
-        if (!imdb_rating) imdb_rating = "N/A";
+        // Quality, Rating, Director, etc.
+        let quality = $('.quality, .movie-quality').text().trim() || "WEB-DL";
+        let rating = $('.imdb-rate, .rating, .score').first().text().trim() || "N/A";
+        let director = $('span.director, .mr-director').text().trim() || "N/A";
+        let year = "2026";
+        const yearMatch = title.match(/\((\d{4})\)/);
+        if (yearMatch) year = yearMatch[1];
 
         // Story
         let story = '';
@@ -102,131 +102,145 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         });
         if (!story) story = 'No description available';
 
-        // Collect zt-links first
-        const ztLinks = [];
+        // Cast extraction
+        const cast = [];
+        $('.cast-item, .actor, .person').each((i, el) => {
+            const name = $(el).find('.name, h4, span').text().trim();
+            const role = $(el).find('.role, .character').text().trim();
+            const img = $(el).find('img').attr('src') || '';
+            if (name) {
+                cast.push({ name, role: role || 'Actor', image: img });
+            }
+        });
+
+        // Gallery images
+        const gallery = [];
+        $('.gallery img, .screenshots img, .entry-content img').each((i, el) => {
+            const src = $(el).attr('src') \vert{}\vert{}$(el).attr('data-src');
+            if (src && src.startsWith('http') && !gallery.includes(src)) {
+                gallery.push(src);
+            }
+        });
+
+        // Downloads Extraction (zt-links සහ direct links වෙනුවට මූවි පේජ් එකේ තියෙන සියලුම download links එකතු කිරීම)
+        const downloads = [];
+
+        // 1. First check direct download buttons on the main movie page
         $('a').each((i, el) => {
             const href = $(el).attr('href') || '';
-            const text = $(el).text().trim();
+            const btnText = $(el).text().trim();
             const parentText = $(el).parent().text().replace(/\s+/g, ' ').trim();
-            const fullText = text + ' ' + parentText;
+            const fullText = btnText + ' ' + parentText;
 
-            if (href && href.includes('/zt-links/')) {
-                const qMatch = fullText.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|HDRip)/i);
-                const quality = qMatch ? qMatch[0].toUpperCase() : "HD";
+            if (href && (href.includes('pixeldrain') || href.includes('mega') || href.includes('telegram.me') || href.includes('t.me') || href.includes('supercloud') || href.includes('space') || href.includes('/zt-links/'))) {
+                if (!href.includes('cinesubz.net') && !href.includes('javascript') && !href.includes('#')) {
+                    const qMatch = fullText.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|HDRip)/i);
+                    const qName = qMatch ? qMatch[0].toUpperCase() : "WEB-DL";
 
-                const sMatch = fullText.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
-                const size = sMatch ? sMatch[0] : "N/A";
+                    const sMatch = fullText.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
+                    const size = sMatch ? sMatch[0] : "N/A";
 
-                if (!ztLinks.some(z => z.ztUrl === href)) {
-                    ztLinks.push({ quality, size, ztUrl: href });
+                    let type = "Direct Server";
+                    if (href.includes('pixeldrain')) type = "PixelDrain";
+                    else if (href.includes('telegram') || href.includes('t.me')) type = "Telegram Bot";
+                    else if (href.includes('space') || href.includes('kdrive')) type = "Direct High-Speed Server";
+
+                    if (!downloads.some(d => d.link === href)) {
+                        downloads.push({
+                            quality: `${qName} [${type}]`,
+                            size: size,
+                            language: "English",
+                            link: href
+                        });
+                    }
                 }
             }
         });
 
-        const downloads = [];
+        // 2. If zt-links or player links exist, fetch them to grab underlying direct/pixel/telegram links
+        const ztLinksToFetch = [];
+        $('a').each((i, el) => {
+            const href = $(el).attr('href') || '';
+            if (href.includes('/zt-links/')) {
+                const text = $(el).text() + ' ' +$(el).parent().text();
+                const qMatch = text.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|HDRip)/i);
+                const sMatch = text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
+                ztLinksToFetch.push({
+                    url: href,
+                    quality: qMatch ? qMatch[0].toUpperCase() : "WEB-DL",
+                    size: sMatch ? sMatch[0] : "N/A"
+                });
+            }
+        });
 
-        // Traverse through zt-links and final redirect pages
-        for (const item of ztLinks) {
-            let resolvedLinks = [];
+        for (const item of ztLinksToFetch) {
             try {
-                // 1. Fetch zt-link page (Timeout 20s)
-                const ztRes = await axios.get(item.ztUrl, { headers: HEADERS, timeout: 20000 });
-                const ztHtml = ztRes.data;
-                const $zt = cheerio.load(ztHtml);
+                const ztRes = await axios.get(item.url, { headers: HEADERS, timeout: 10000 });
+                const $zt = cheerio.load(ztRes.data);
                 
                 let redirectUrl = '';
-
-                // Find redirect link from zt page (නිවැරදි කරන ලදී)
                 $zt('a').each((i, el) => {
-                    const href = $zt(el).attr('href') || '';
-                    if (href && !href.includes('cinesubz.net') && !href.includes('javascript') && !href.includes('#') && href.startsWith('http')) {
-                        redirectUrl = href;
-                    }
+                    const h = $zt(el).attr('href') || '';
+                    if (h && !h.includes('cinesubz.net') && h.startsWith('http')) redirectUrl = h;
                 });
 
-                if (!redirectUrl) {
-                    const urlRegex = /https?:\/\/[^\s"'<>]+\b(?:space|redirect|dl|download|player|go)[^\s"'<>]*/gi;
-                    const matches = ztHtml.match(urlRegex);
-                    if (matches) {
-                        const valid = matches.filter(m => !m.includes('cinesubz.net'));
-                        if (valid.length > 0) redirectUrl = valid[0];
-                    }
-                }
-
-                // 2. Fetch final redirect page (csplayer2.space)
                 if (redirectUrl) {
-                    const finalRes = await axios.get(redirectUrl, { headers: HEADERS, timeout: 20000 });
-                    const finalHtml = finalRes.data;
-                    const $final = cheerio.load(finalHtml);
+                    const finalRes = await axios.get(redirectUrl, { headers: HEADERS, timeout: 10000 });
+                    const $final = cheerio.load(finalRes.data);
 
-                    // Check all <a> tags on final page
+                    // Scrape final redirect page links (csplayer / pixeldrain / telegram)
                     $final('a').each((i, el) => {
                         const link = $final(el).attr('href') || '';
-                        const btnText = $final(el).text().trim();
+                        const text = $final(el).text().trim();
+                        if (link && !link.includes('cinesubz.net') && !link.includes('CineSubzAdmin') && !link.includes('javascript')) {
+                            let type = "Direct Server";
+                            if (link.includes('pixeldrain')) type = "PixelDrain";
+                            else if (link.includes('telegram') || link.includes('t.me')) type = "Telegram Bot";
 
-                        if (link && !link.includes('cinesubz.net') && !link.includes('javascript') && !link.includes('#')) {
-                            if (!link.includes('CineSubzAdmin')) {
-                                resolvedLinks.push({
-                                    name: `${btnText || 'Direct Download'} - ${item.quality} (${item.size})`,
-                                    quality: item.quality,
+                            if (!downloads.some(d => d.link === link)) {
+                                downloads.push({
+                                    quality: `${item.quality} [${type}]`,
                                     size: item.size,
-                                    direct_link: link
+                                    language: "English",
+                                    link: link
                                 });
                             }
                         }
                     });
-
-                    // If <a> tags didn't give links, search via Regex in final HTML/Scripts
-                    if (resolvedLinks.length === 0) {
-                        const linkRegex = /https?:\/\/[^\s"'<>]+\b(?:pixeldrain|mega|drive|download|file|stream|get)[^\s"'<>]*/gi;
-                        const matches = finalHtml.match(linkRegex);
-                        if (matches) {
-                            const valid = matches.filter(m => !m.includes('cinesubz.net') && !m.includes('CineSubzAdmin'));
-                            valid.forEach((l, idx) => {
-                                resolvedLinks.push({
-                                    name: `Direct Download ${idx + 1} - ${item.quality} (${item.size})`,
-                                    quality: item.quality,
-                                    size: item.size,
-                                    direct_link: l
-                                });
-                            });
-                        }
-                    }
                 }
-
-                if (resolvedLinks.length > 0) {
-                    downloads.push(...resolvedLinks);
-                } else {
-                    downloads.push({
-                        name: `Download Link - ${item.quality} (${item.size})`,
-                        quality: item.quality,
-                        size: item.size,
-                        direct_link: redirectUrl || item.ztUrl
-                    });
-                }
-
-            } catch (e) {
-                downloads.push({
-                    name: `Download Link - ${item.quality} (${item.size})`,
-                    quality: item.quality,
-                    size: item.size,
-                    direct_link: item.ztUrl
-                });
+            } catch (err) {
+                // Ignore nested fetch error and continue
             }
         }
 
         res.json({
             status: true,
-            creator: "IMALSHA API",
+            creator: "@Imalsha",
             site: "cinesubz",
+            url: movieUrl,
             data: {
                 title,
-                imdb_rating,
-                story,
                 image,
+                quality,
+                rating,
+                imdb: `${rating} (N/A)`,
+                director,
+                language: "ENGLISH",
+                genres: ["Action", "Adventure", "English", "Sinhala Subtitles"],
+                story,
+                cast,
+                gallery,
+                trailer: "https://www.youtube.com/@cinesubz",
+                year,
+                duration: "N/A",
+                tag: "English",
+                directors: director,
+                stars: "N/A",
+                country: "Sri Lanka / Global",
                 downloads
             }
         });
+
     } catch (err) {
         res.status(500).json({ status: false, error: err.message });
     }
