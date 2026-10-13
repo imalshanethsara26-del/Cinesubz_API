@@ -40,7 +40,7 @@ app.get('/', (req, res) => {
     });
 });
 
-// 1. Latest Movies Endpoint (Safe from syntax errors)
+// 1. Latest Movies Endpoint (Pagination Support)
 app.get('/api/v1/cinesubz/latest', async (req, res) => {
     try {
         const pageNum = req.query.page || 1;
@@ -123,7 +123,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint
+// 3. Info & Download Endpoint (Enhanced Link Scraper for all movies including Iron Man)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -152,16 +152,19 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 }
             });
 
-            const ztLinks = [];
+            const dlLinks = [];
             document.querySelectorAll('a').forEach(a => {
-                const href = a.href;
-                if (href && (href.includes('/zt-links/') || href.includes('zt-links'))) {
-                    const parentText = a.parentElement ? a.parentElement.innerText : '';
-                    ztLinks.push({ url: href, text: a.innerText + ' ' + parentText });
+                const href = a.href || '';
+                const txt = (a.innerText || '') + ' ' + (a.parentElement ? a.parentElement.innerText : '');
+                
+                if (href && (href.includes('zt-links') || href.includes('/download/') || href.includes('redirect') || href.includes('link'))) {
+                    if (!href.includes('cinesubz.lk/movies/') && !href.includes('cinesubz.net/movies/') && !href.includes('facebook.com') && !href.includes('t.me/cinesubz')) {
+                        dlLinks.push({ url: href, text: txt });
+                    }
                 }
             });
 
-            return { title, image, quality, rating, director, story: story || 'No description available', ztLinks };
+            return { title, image, quality, rating, director, story: story || 'No description available', dlLinks };
         });
 
         let year = "2026";
@@ -170,8 +173,8 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         const downloads = [];
 
-        for (let i = 0; i < pageData.ztLinks.length; i++) {
-            const item = pageData.ztLinks[i];
+        for (let i = 0; i < pageData.dlLinks.length; i++) {
+            const item = pageData.dlLinks[i];
             let ztPage;
             try {
                 ztPage = await browser.newPage();
@@ -190,7 +193,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     return links;
                 });
 
-                const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|HDRip)/i);
+                const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|WEBRip|HDRip)/i);
                 const qualityName = qMatch ? qMatch[0].toUpperCase() : "WEB-DL";
                 const sMatch = item.text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
                 const size = sMatch ? sMatch[0] : "N/A";
