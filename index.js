@@ -40,7 +40,7 @@ app.get('/', (req, res) => {
     });
 });
 
-// 1. Latest Movies Endpoint (Pagination Support)
+// 1. Latest Movies Endpoint
 app.get('/api/v1/cinesubz/latest', async (req, res) => {
     try {
         const pageNum = req.query.page || 1;
@@ -123,7 +123,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Enhanced Link Scraper for all movies including Iron Man)
+// 3. Info & Download Endpoint (Enhanced Robust Scraper for both old and new movies)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -152,15 +152,14 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 }
             });
 
+            // Robust selector: Grab all links inside entry content, spoilers, or buttons to support old movies (like Iron Man 2008)
             const dlLinks = [];
-            document.querySelectorAll('a').forEach(a => {
+            document.querySelectorAll('.entry-content a, .su-spoiler-content a, article a, a.btn, .button a').forEach(a => {
                 const href = a.href || '';
                 const txt = (a.innerText || '') + ' ' + (a.parentElement ? a.parentElement.innerText : '');
                 
-                if (href && (href.includes('zt-links') || href.includes('/download/') || href.includes('redirect') || href.includes('link'))) {
-                    if (!href.includes('cinesubz.lk/movies/') && !href.includes('cinesubz.net/movies/') && !href.includes('facebook.com') && !href.includes('t.me/cinesubz')) {
-                        dlLinks.push({ url: href, text: txt });
-                    }
+                if (href && !href.includes('cinesubz.net') && !href.includes('cinesubz.lk') && !href.includes('facebook.com') && !href.includes('whatsapp.com') && !href.includes('telegram.org') && !href.includes('wp-content/uploads')) {
+                    dlLinks.push({ url: href, text: txt });
                 }
             });
 
