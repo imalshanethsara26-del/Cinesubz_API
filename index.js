@@ -22,7 +22,7 @@ async function getBrowser() {
 }
 
 app.get('/', (req, res) => {
-    res.json({ status: true, message: "Tracer Puppeteer API is Live 🚀" });
+    res.json({ status: true, message: "Final Cinesubz API is Live 🚀" });
 });
 
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
@@ -30,7 +30,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==================================================`);
-    console.log(`🚀 [JOURNEY START] Target URL: ${movieUrl}`);
+    console.log(`🚀 [JOB START] Target URL: ${movieUrl}`);
     console.log(`==================================================`);
 
     let browser;
@@ -40,7 +40,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
         await page.setViewport({ width: 1280, height: 800 });
 
-        console.log(`\n👉 [Step 1] Navigating to Main Movie Page...`);
+        console.log(`👉 Navigating to Main Movie Page...`);
         const response = await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
         console.log(`   ✅ Main Page Status: ${response ? response.status() : 'Unknown'}`);
 
@@ -73,9 +73,6 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         console.log(`   📌 Movie Title Found: ${pageData.title}`);
         console.log(`   🔗 Found ZT-Links Count: ${pageData.ztLinks.length}`);
-        pageData.ztLinks.forEach((item, idx) => {
-            console.log(`      [ZT-${idx + 1}] URL: ${item.url} | Text: ${item.text.trim().substring(0, 40)}`);
-        });
 
         let year = "2026";
         const yearMatch = pageData.title.match(/\((\d{4})\)/);
@@ -88,87 +85,61 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             let ztPage;
             try {
                 console.log(`\n--------------------------------------------------`);
-                console.log(`🔄 [Step 2.${i + 1}] Opening ZT-Link: ${item.url}`);
+                console.log(`🔄 Processing ZT-Link [${i + 1}]: ${item.url}`);
                 
                 ztPage = await browser.newPage();
                 await ztPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
                 
-                const ztRes = await ztPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-                console.log(`   ✅ ZT Page Status: ${ztRes ? ztRes.status() : 'Unknown'}`);
+                await ztPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
-                const redirectUrl = await ztPage.evaluate(() => {
-                    let found = '';
+                // ZT පේජ් එකෙන් Direct Server / Redirect / Pixeldrain ලින්ක්ස් සෘජුවම අල්ලා ගැනීම
+                const foundLinks = await ztPage.evaluate(() => {
+                    const links = [];
                     document.querySelectorAll('a').forEach(a => {
                         const h = a.href;
                         if (h && !h.includes('cinesubz.lk') && !h.includes('cinesubz.net') && !h.includes('CineSubzAdmin')) {
-                            if (h.includes('space') || h.includes('redirect') || h.includes('player') || h.includes('dl') || h.includes('download')) {
-                                found = h;
-                            }
+                            links.push(h);
                         }
                     });
-                    if (!found) {
-                        document.querySelectorAll('a').forEach(a => {
-                            const h = a.href;
-                            if (h && !h.includes('cinesubz') && !h.includes('t.me/')) {
-                                found = h;
-                            }
-                        });
-                    }
-                    return found;
+                    return links;
                 });
 
-                console.log(`   🔗 Resolved Redirect URL: ${redirectUrl || 'NONE FOUND'}`);
+                console.log(`   🔗 Found Links inside ZT page: ${foundLinks.length}`);
 
-                if (redirectUrl) {
-                    console.log(`   👉 [Step 3] Fetching Final Redirect Page: ${redirectUrl}`);
-                    const finalPage = await browser.newPage();
-                    await finalPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
-                    
-                    await finalPage.goto(redirectUrl, { waitUntil: 'networkidle2', timeout: 25000 });
-                    const fullHtml = await finalPage.content();
-                    console.log(`      ✅ Final Page Loaded! HTML Length: ${fullHtml.length}`);
+                const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|HDRip)/i);
+                const qualityName = qMatch ? qMatch[0].toUpperCase() : "WEB-DL";
+                const sMatch = item.text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
+                const size = sMatch ? sMatch[0] : "N/A";
 
-                    const linkRegex = /https?:\/\/[^\s"'<>]+\b(?:pixeldrain\.com|supercloud2\.space|kdrive\d*\.supercloud\d*\.space|t\.me|telegram\.me|drive|download|stream)[^\s"'<>]*/gi;
-                    const matches = fullHtml.match(linkRegex) || [];
-                    console.log(`      🎯 Regex found raw matches count: ${matches.length}`);
+                foundLinks.forEach(link => {
+                    if (link.includes('telegram.org')) return;
 
-                    const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|HDRip)/i);
-                    const qualityName = qMatch ? qMatch[0].toUpperCase() : "WEB-DL";
-                    const sMatch = item.text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
-                    const size = sMatch ? sMatch[0] : "N/A";
+                    let isBotLink = link.includes('t.me/') || link.includes('telegram.me/');
+                    if (isBotLink && !link.includes('bot') && !link.includes('start=')) return;
 
-                    matches.forEach(link => {
-                        link = link.replace(/["'>]/g, '');
-                        if (link.includes('cinesubz.lk') || link.includes('cinesubz.net') || link.includes('telegram.org')) return;
+                    let type = "Direct Server";
+                    if (link.includes('pixeldrain')) type = "PixelDrain";
+                    else if (isBotLink) type = "Telegram Bot";
+                    else if (link.includes('space') || link.includes('kdrive') || link.includes('csplayer')) type = "Direct High-Speed Server";
 
-                        let isBotLink = link.includes('t.me/') || link.includes('telegram.me/');
-                        if (isBotLink && !link.includes('bot') && !link.includes('start=')) return;
+                    const qualityLabel = qualityName + " [" + type + "]";
+                    if (!downloads.some(d => d.link === link)) {
+                        downloads.push({ quality: qualityLabel, size, language: "English", link });
+                        console.log(`   🎯 [CAPTURED]: ${qualityLabel} -> ${link}`);
+                    }
+                });
 
-                        let type = "Direct Server";
-                        if (link.includes('pixeldrain')) type = "PixelDrain";
-                        else if (isBotLink) type = "Telegram Bot";
-                        else if (link.includes('space') || link.includes('kdrive')) type = "Direct High-Speed Server";
-
-                        const qualityLabel = qualityName + " [" + type + "]";
-                        if (!downloads.some(d => d.link === link)) {
-                            downloads.push({ quality: qualityLabel, size, language: "English", link });
-                            console.log(`         📥 [CAPTURED LINK]: ${qualityLabel} -> ${link}`);
-                        }
-                    });
-
-                    await finalPage.close();
-                } else {
-                    console.log(`   ⚠️ [WARNING] No valid redirect URL found for this ZT-Link!`);
-                }
                 await ztPage.close();
             } catch (ztErr) {
-                console.log(`   ❌ [ERROR in ZT Loop]: ${ztErr.message}`);
+                console.log(`   ❌ [ERROR]: ${ztErr.message}`);
                 if (ztPage) await ztPage.close();
             }
         }
 
+        await browser.close();
+
         console.log(`\n==================================================`);
-        console.log(`🎉 [JOURNEY COMPLETE] Total Downloads Extracted: ${downloads.length}`);
+        console.log(`🎉 [COMPLETED] Total Downloads Extracted: ${downloads.length}`);
         console.log(`==================================================\n`);
 
         res.json({
@@ -206,4 +177,4 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log("Tracer Puppeteer API running on port " + PORT));
+app.listen(PORT, () => console.log("Final Cinesubz API running on port " + PORT));
