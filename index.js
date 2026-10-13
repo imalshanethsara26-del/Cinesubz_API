@@ -123,7 +123,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Handles Obscure API Redirect Routes & Direct File Extraction)
+// 3. Info & Download Endpoint (Direct High-Speed Server & PixelDrain Extractor)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -156,7 +156,6 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 }
             });
 
-            // Grab all potential download/api redirect links from the movie post
             const initialLinks = [];
             document.querySelectorAll('a').forEach(a => {
                 const href = a.href || '';
@@ -193,7 +192,6 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 subPage = await browser.newPage();
                 await subPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
                 
-                // Track final destination URL in case of HTTP redirects
                 let finalDestinationUrl = item.url;
                 subPage.on('response', response => {
                     const status = response.status();
@@ -205,7 +203,6 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 await subPage.goto(item.url, { waitUntil: 'networkidle2', timeout: 25000 }).catch(() => {});
                 await new Promise(r => setTimeout(r, 2000));
 
-                // Get page body text as well (in case it returns JSON or plain text containing file links)
                 const pageBodyText = await subPage.evaluate(() => document.body ? document.body.innerText : '');
                 const urlMatches = pageBodyText.match(/https?:\/\/[^\s"'<>]+/g) || [];
 
@@ -221,11 +218,9 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     return list;
                 });
 
-                // Add text-matched URLs as well
-                urlMatches.forEach(u => {
-                    subLinks.push({ href: u, text: '' });
-                });
+                urlMatches.forEach(u => subLinks.push({ href: u, text: '' }));
                 subLinks.push({ href: finalDestinationUrl, text: '' });
+                subLinks.push({ href: item.url, text: '' }); // Include the intermediate URL itself as it contains the stream/file link
 
                 const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|WEBRip|HDRip)/i);
                 const qualityName = qMatch ? qMatch[0].toUpperCase() : "WEB-DL";
@@ -237,64 +232,18 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     let targetUrl = linkObj.href;
                     const tLower = targetUrl.toLowerCase();
 
-                    if (tLower.includes('cinesubz.') && !tLower.includes('/api-') && !tLower.includes('space') && !tLower.includes('kdrive')) continue;
                     if (tLower.includes('facebook.com') || tLower.includes('youtube.com')) continue;
 
-                    if (tLower.includes('pixeldrain') || tLower.endsWith('.mp4') || tLower.endsWith('.mkv') || (tLower.includes('t.me/') && tLower.includes('bot') && tLower.includes('start='))) {
-                        let type = "Direct Server";
+                    if (tLower.includes('pixeldrain') || tLower.endsWith('.mp4') || tLower.endsWith('.mkv') || tLower.includes('space') || tLower.includes('kdrive') || tLower.includes('csplayer') || (tLower.includes('t.me/') && tLower.includes('bot') && tLower.includes('start='))) {
+                        
+                        let type = "Direct High-Speed Server";
                         if (tLower.includes('pixeldrain')) type = "PixelDrain";
                         else if (tLower.includes('t.me/')) type = "Telegram Bot";
 
                         const qualityLabel = qualityName + " [" + type + "]";
                         if (!downloads.some(d => d.link === targetUrl)) {
                             downloads.push({ quality: qualityLabel, size, language: "English", link: targetUrl });
-                            console.log(`   ✅ Target File Link Captured: [${qualityLabel}] -> ${targetUrl}`);
-                        }
-                    } 
-                    else if (tLower.includes('space') || tLower.includes('kdrive') || tLower.includes('csplayer') || tLower.includes('redirect')) {
-                        console.log(`   🚀 Deep diving into player page: ${targetUrl}`);
-                        let playerPage;
-                        try {
-                            playerPage = await browser.newPage();
-                            await playerPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
-                            await playerPage.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
-                            await new Promise(r => setTimeout(r, 1500));
-
-                            const playerBody = await playerPage.evaluate(() => document.body ? document.body.innerText : '');
-                            const pUrlMatches = playerBody.match(/https?:\/\/[^\s"'<>]+/g) || [];
-
-                            const ultimateLinks = await playerPage.evaluate(() => {
-                                const uList = [];
-                                document.querySelectorAll('a').forEach(el => {
-                                    const h = el.href || '';
-                                    if (h && !h.includes('javascript:') && !h.includes('#')) {
-                                        uList.push(h);
-                                    }
-                                });
-                                return uList;
-                            });
-
-                            pUrlMatches.forEach(pu => ultimateLinks.push(pu));
-                            await playerPage.close();
-
-                            ultimateLinks.forEach(uLink => {
-                                const uLower = uLink.toLowerCase();
-                                if (uLower.includes('cinesubz.') && !uLower.includes('space') && !uLower.includes('kdrive')) return;
-
-                                let finalType = "Direct High-Speed Server";
-                                if (uLower.includes('pixeldrain')) finalType = "PixelDrain";
-                                else if (uLower.includes('t.me/') && uLower.includes('bot')) finalType = "Telegram Bot";
-
-                                const qualityLabel = qualityName + " [" + finalType + "]";
-                                if (uLower.includes('pixeldrain') || uLower.endsWith('.mp4') || uLower.endsWith('.mkv') || uLower.includes('space') || uLower.includes('kdrive')) {
-                                    if (!downloads.some(d => d.link === uLink)) {
-                                        downloads.push({ quality: qualityLabel, size, language: "English", link: uLink });
-                                        console.log(`   ✅ Deep Player Link Captured: [${qualityLabel}] -> ${uLink}`);
-                                    }
-                                }
-                            });
-                        } catch (pe) {
-                            if (playerPage) await playerPage.close();
+                            console.log(`   ✅ Valid Download Link Captured: [${qualityLabel}] -> ${targetUrl}`);
                         }
                     }
                 }
