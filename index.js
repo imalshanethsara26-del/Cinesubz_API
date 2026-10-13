@@ -123,7 +123,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Deep Scraping: Enters intermediate page to extract real Direct Download link)
+// 3. Info & Download Endpoint (Smart Target: Enters intermediate page and extracts "Direct Download" buttons)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -152,17 +152,15 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 }
             });
 
-            // Grab all zt-links / download redirect pages from the movie post
+            // Grab all outbound links from the movie post
             const redirectLinks = [];
             document.querySelectorAll('a').forEach(a => {
                 const href = a.href || '';
                 const txt = (a.innerText || '') + ' ' + (a.parentElement ? a.parentElement.innerText : '');
                 
-                if (href && (href.includes('zt-links') || href.includes('download') || href.includes('link') || href.includes('space'))) {
-                    if (!href.includes('cinesubz.net/movies/') && !href.includes('cinesubz.lk/movies/') && !href.includes('facebook.com') && !href.includes('telegram.org')) {
-                        if (!redirectLinks.some(d => d.url === href)) {
-                            redirectLinks.push({ url: href, text: txt });
-                        }
+                if (href && !href.includes('cinesubz.net') && !href.includes('cinesubz.lk') && !href.includes('facebook.com') && !href.includes('telegram.org')) {
+                    if (!redirectLinks.some(d => d.url === href)) {
+                        redirectLinks.push({ url: href, text: txt });
                     }
                 }
             });
@@ -176,7 +174,6 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         const downloads = [];
 
-        // Loop through each intermediate redirect link and deep-scrape the actual download link inside it
         for (let i = 0; i < pageData.redirectLinks.length; i++) {
             const item = pageData.redirectLinks[i];
             let subPage;
@@ -186,17 +183,21 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 
                 await subPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
-                // Extract all links inside the intermediate page (e.g. csplayer2.space)
-                const innerLinks = await subPage.evaluate(() => {
-                    const list = [];
+                // Specifically look for buttons/links containing "Direct" or "Download" or direct media server links
+                const extractedLinks = await subPage.evaluate(() => {
+                    const links = [];
                     document.querySelectorAll('a').forEach(a => {
-                        const h = a.href;
-                        const t = a.innerText || '';
+                        const h = a.href || '';
+                        const t = (a.innerText || '').toLowerCase();
+                        
                         if (h && !h.includes('cinesubz')) {
-                            list.push({ href: h, text: t });
+                            // Target links that have "direct", "download" in text, or point to servers/files
+                            if (t.includes('direct') || t.includes('download') || h.includes('space') || h.includes('pixeldrain') || h.endsWith('.mp4') || h.endsWith('.mkv')) {
+                                links.push({ href: h, text: a.innerText });
+                            }
                         }
                     });
-                    return list;
+                    return links;
                 });
 
                 const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|WEBRip|HDRip)/i);
@@ -204,7 +205,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 const sMatch = item.text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
                 const size = sMatch ? sMatch[0] : "N/A";
 
-                innerLinks.forEach(linkObj => {
+                extractedLinks.forEach(linkObj => {
                     const link = linkObj.href;
                     if (link.includes('telegram.org') || link.includes('facebook.com')) return;
 
