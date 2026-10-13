@@ -7,7 +7,6 @@ let PORT = process.env.PORT || 3000;
 
 app.use(cors());
 
-// Puppeteer Browser Launch Config (Railway සර්වර් වල රන් වීමට අවශ්‍ය args සමඟ)
 async function getBrowser() {
     return await puppeteer.launch({
         headless: true,
@@ -20,63 +19,21 @@ async function getBrowser() {
     });
 }
 
-// Root Status Route
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "Puppeteer Cinesubz API is Live 🚀",
+        message: "Advanced Puppeteer Cinesubz API is Live 🚀",
         endpoint: "/api/v1/cinesubz/infodl?url=movie_url"
     });
 });
 
-// Search Endpoint (Puppeteer හරහා සෙවීම)
-app.get('/api/v1/cinesubz/search', async (req, res) => {
-    const query = req.query.q;
-    if (!query) return res.status(400).json({ status: false, message: "Search term required" });
-
-    let browser;
-    try {
-        browser = await getBrowser();
-        const page = await browser.newPage();
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
-
-        const searchUrl = "https://cinesubz.lk/?s=" + encodeURIComponent(query);
-        await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-
-        const results = await page.evaluate(() => {
-            const list = [];
-            document.querySelectorAll('a').forEach(el => {
-                let href = el.href;
-                if (href && href.includes('cinesubz.lk') && (href.includes('/movies/') || href.includes('/tvshows/'))) {
-                    let title = el.querySelector('h2, h3, .title')?.innerText || el.innerText || '';
-                    let img = el.querySelector('img')?.src || '';
-                    if (title.trim().length > 2) {
-                        if (!list.some(r => r.link === href)) {
-                            list.push({ title: title.trim().replace(/\t|\n/g, ''), image: img, link: href });
-                        }
-                    }
-                }
-            });
-            return list;
-        });
-
-        await browser.close();
-        res.json({ status: true, creator: "@Imalsha", site: "cinesubz", results_count: results.length, data: results });
-
-    } catch (err) {
-        if (browser) await browser.close();
-        res.status(500).json({ status: false, error: err.message });
-    }
-});
-
-// Info & Download Endpoint (රහස් Puppeteer Multi-step Path හරහා ලින්ක්ස් ලබා ගැනීම)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     let browser;
     try {
-        console.log("🚀 [Puppeteer] Launching browser for movie:", movieUrl);
+        console.log("🚀 [Advanced Puppeteer] Starting scan for:", movieUrl);
         browser = await getBrowser();
         const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
@@ -117,7 +74,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         const downloads = [];
 
-        // Zt-links හරහා ගොස් අවසාන රීඩිරෙක්ට් පේජ් එකෙන් සැබෑ ඩවුන්ලෝඩ් ලින්ක්ස් කැප්චර් කිරීම
+        // Zt-links හරහා ගොස් අවසාන පේජ් එකේ HTML/Scripts සම්පූර්ණයෙන් ස්කෑන් කිරීම
         for (const item of data.ztLinks) {
             let ztPage;
             try {
@@ -139,25 +96,26 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 if (redirectUrl) {
                     const finalPage = await browser.newPage();
                     await finalPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
-                    await finalPage.goto(redirectUrl, { waitUntil: 'networkidle2', timeout: 20000 });
+                    await finalPage.goto(redirectUrl, { waitUntil: 'networkidle2', timeout: 25000 });
 
-                    const linksFound = await finalPage.evaluate(() => {
-                        const list = [];
-                        document.querySelectorAll('a').forEach(a => {
-                            const l = a.href;
-                            if (l && !l.includes('cinesubz.lk') && !l.includes('javascript') && !l.includes('telegram.org')) {
-                                list.push(l);
-                            }
-                        });
-                        return list;
-                    });
+                    // මුළු පේජ් එකේ HTML සහ ස්ක්‍රිප්ට් කෝඩ් එක ලබා ගැනීම
+                    const fullHtml = await finalPage.content();
+
+                    // Regex මඟින් PixelDrain, SuperCloud, Telegram Bot සහ Direct Server ලින්ක්ස් සියල්ල එකතු කිරීම
+                    const linkRegex = /https?:\/\/[^\s"'<>]+\b(?:pixeldrain\.com|supercloud2\.space|kdrive\d*\.supercloud\d*\.space|t\.me|telegram\.me|drive|download|stream)[^\s"'<>]*/gi;
+                    const matches = fullHtml.match(linkRegex) || [];
 
                     const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|HDRip)/i);
                     const qualityName = qMatch ? qMatch[0].toUpperCase() : "WEB-DL";
                     const sMatch = item.text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
                     const size = sMatch ? sMatch[0] : "N/A";
 
-                    linksFound.forEach(link => {
+                    matches.forEach(link => {
+                        // URL සනීපාරක්ෂාව (Cleaning URL quotes if caught)
+                        link = link.replace(/["'>]/g, '');
+
+                        if (link.includes('cinesubz.lk') || link.includes('telegram.org')) return;
+
                         let isBotLink = link.includes('t.me/') || link.includes('telegram.me/');
                         if (isBotLink && !link.includes('bot') && !link.includes('start=')) return;
 
@@ -221,4 +179,4 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log("Puppeteer Cinesubz API running on port " + PORT));
+app.listen(PORT, () => console.log("Advanced Puppeteer API running on port " + PORT));
