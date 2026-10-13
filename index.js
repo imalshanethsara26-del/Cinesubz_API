@@ -123,7 +123,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Deep Navigation inside CS Player Pages)
+// 3. Info & Download Endpoint (Handles Timers, Intermediate Redirects, and CS Player Button Extraction)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -192,10 +192,24 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 subPage = await browser.newPage();
                 await subPage.setUserAgent(HEADERS['User-Agent']);
                 
-                await subPage.goto(item.url, { waitUntil: 'networkidle2', timeout: 25000 }).catch(() => {});
-                await new Promise(r => setTimeout(r, 2000));
+                await subPage.goto(item.url, { waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
+                
+                // Wait for any timer or redirect button (Go to Download Page) to appear and click it if exists
+                try {
+                    await subPage.waitForSelector('a, button', { timeout: 4000 });
+                    // Click buttons like "Go to Download Page" if present
+                    await subPage.evaluate(() => {
+                        document.querySelectorAll('a, button').forEach(el => {
+                            if (el.innerText.toLowerCase().includes('download') || el.innerText.toLowerCase().includes('go to')) {
+                                el.click();
+                            }
+                        });
+                    });
+                    await new Promise(r => setTimeout(r, 4000)); // Wait for csplayer to load fully
+                } catch (e) {}
 
-                const subLinks = await subPage.evaluate(() => {
+                // Extract all links inside the final csplayer / download page after waiting
+                const csPlayerLinks = await subPage.evaluate(() => {
                     const list = [];
                     document.querySelectorAll('a').forEach(a => {
                         const h = a.href || '';
@@ -212,72 +226,26 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 const sMatch = item.text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
                 const size = sMatch ? sMatch[0] : "N/A";
 
-                for (let j = 0; j < subLinks.length; j++) {
-                    const linkObj = subLinks[j];
+                csPlayerLinks.forEach(linkObj => {
                     let targetUrl = linkObj.href;
+                    let linkText = linkObj.text.toLowerCase();
                     const tLower = targetUrl.toLowerCase();
 
-                    if (tLower.includes('facebook.com') || tLower.includes('youtube.com')) continue;
+                    if (tLower.includes('facebook.com') || tLower.includes('youtube.com') || tLower.includes('cinesubz.net/movies')) return;
 
-                    // If it's a CS Player / Space / Kdrive page, go INSIDE that page to extract the real internal links!
-                    if (tLower.includes('space') || tLower.includes('kdrive') || tLower.includes('csplayer') || tLower.includes('redirect')) {
-                        console.log(`   🚀 Entering CS Player Page: ${targetUrl}`);
-                        let playerPage;
-                        try {
-                            playerPage = await browser.newPage();
-                            await playerPage.setUserAgent(HEADERS['User-Agent']);
-                            await playerPage.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
-                            await new Promise(r => setTimeout(r, 2000));
-
-                            // Extract all links INSIDE the CS Player page
-                            const innerFileLinks = await playerPage.evaluate(() => {
-                                const innerList = [];
-                                document.querySelectorAll('a').forEach(el => {
-                                    const h = el.href || '';
-                                    const t = (el.innerText || '').trim();
-                                    if (h && !h.includes('javascript:') && !h.includes('#')) {
-                                        innerList.push({ href: h, text: t });
-                                    }
-                                });
-                                return innerList;
-                            });
-
-                            await playerPage.close();
-
-                            innerFileLinks.forEach(inner => {
-                                const innerUrl = inner.href;
-                                const iLower = innerUrl.toLowerCase();
-
-                                if (iLower.includes('cinesubz.') || iLower.includes('facebook.com') || iLower.includes('youtube.com')) return;
-
-                                let type = "Direct Server";
-                                if (iLower.includes('pixeldrain')) type = "PixelDrain";
-                                else if (iLower.includes('t.me/') && iLower.includes('bot')) type = "Telegram Bot";
-                                else if (iLower.includes('space') || iLower.includes('kdrive') || iLower.endsWith('.mp4') || iLower.endsWith('.mkv')) type = "Direct High-Speed Server";
-
-                                const qualityLabel = qualityName + " [" + type + "]";
-                                if (!downloads.some(d => d.link === innerUrl)) {
-                                    downloads.push({ quality: qualityLabel, size, language: "English", link: innerUrl });
-                                    console.log(`     ✅ Inner Link Extracted from CS Page: [${qualityLabel}] -> ${innerUrl}`);
-                                }
-                            });
-
-                        } catch (pe) {
-                            if (playerPage) await playerPage.close();
-                        }
-                    } 
-                    else if (tLower.includes('pixeldrain') || tLower.endsWith('.mp4') || tLower.endsWith('.mkv') || (tLower.includes('t.me/') && tLower.includes('bot'))) {
-                        let type = "Direct Server";
-                        if (tLower.includes('pixeldrain')) type = "PixelDrain";
-                        else if (tLower.includes('t.me/')) type = "Telegram Bot";
+                    if (tLower.includes('space') || tLower.includes('kdrive') || tLower.includes('csplayer') || tLower.includes('pixeldrain') || tLower.endsWith('.mp4') || tLower.endsWith('.mkv') || (tLower.includes('t.me/') && tLower.includes('bot'))) {
+                        
+                        let type = "Direct High-Speed Server";
+                        if (tLower.includes('pixeldrain') || linkText.includes('pixeldrain')) type = "PixelDrain";
+                        else if (tLower.includes('t.me/') || linkText.includes('telegram')) type = "Telegram Bot";
 
                         const qualityLabel = qualityName + " [" + type + "]";
                         if (!downloads.some(d => d.link === targetUrl)) {
                             downloads.push({ quality: qualityLabel, size, language: "English", link: targetUrl });
-                            console.log(`   ✅ Direct Link Captured: [${qualityLabel}] -> ${targetUrl}`);
+                            console.log(`   ✅ Download Link Captured from CS Page: [${qualityLabel}] -> ${targetUrl}`);
                         }
                     }
-                }
+                });
 
                 await subPage.close();
             } catch (subErr) {
