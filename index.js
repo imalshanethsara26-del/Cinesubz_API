@@ -123,7 +123,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Deep Recursive Traversal to final file links)
+// 3. Info & Download Endpoint (Handles Obscure API Redirect Routes & Direct File Extraction)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -156,7 +156,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 }
             });
 
-            // Grab all initial download/zt links from the movie post
+            // Grab all potential download/api redirect links from the movie post
             const initialLinks = [];
             document.querySelectorAll('a').forEach(a => {
                 const href = a.href || '';
@@ -165,7 +165,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
                 if (hLower.includes('javascript:') || hLower.includes('#') || hLower.includes('.jpg') || hLower.includes('facebook.com') || hLower.includes('account')) return;
 
-                if (href && (hLower.includes('zt-links') || hLower.includes('download') || hLower.includes('space') || hLower.includes('kdrive') || hLower.includes('csplayer') || hLower.includes('pixeldrain') || txt.toLowerCase().includes('download'))) {
+                if (href && (hLower.includes('zt-links') || hLower.includes('download') || hLower.includes('space') || hLower.includes('kdrive') || hLower.includes('csplayer') || hLower.includes('pixeldrain') || hLower.includes('/api-') || txt.toLowerCase().includes('download'))) {
                     if (!initialLinks.some(d => d.url === href)) {
                         initialLinks.push({ url: href, text: txt });
                     }
@@ -186,17 +186,29 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         for (let i = 0; i < pageData.initialLinks.length; i++) {
             const item = pageData.initialLinks[i];
-            console.log(`\n⏳ Navigating Initial Link ${i + 1}/${pageData.initialLinks.length}: ${item.url}`);
+            console.log(`\n⏳ Navigating Link ${i + 1}/${pageData.initialLinks.length}: ${item.url}`);
             
             let subPage;
             try {
                 subPage = await browser.newPage();
                 await subPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
                 
+                // Track final destination URL in case of HTTP redirects
+                let finalDestinationUrl = item.url;
+                subPage.on('response', response => {
+                    const status = response.status();
+                    if ((status >= 300 && status <= 399) && response.headers()['location']) {
+                        finalDestinationUrl = response.headers()['location'];
+                    }
+                });
+
                 await subPage.goto(item.url, { waitUntil: 'networkidle2', timeout: 25000 }).catch(() => {});
                 await new Promise(r => setTimeout(r, 2000));
 
-                // Extract all links inside this intermediate page
+                // Get page body text as well (in case it returns JSON or plain text containing file links)
+                const pageBodyText = await subPage.evaluate(() => document.body ? document.body.innerText : '');
+                const urlMatches = pageBodyText.match(/https?:\/\/[^\s"'<>]+/g) || [];
+
                 const subLinks = await subPage.evaluate(() => {
                     const list = [];
                     document.querySelectorAll('a').forEach(a => {
@@ -209,20 +221,25 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     return list;
                 });
 
+                // Add text-matched URLs as well
+                urlMatches.forEach(u => {
+                    subLinks.push({ href: u, text: '' });
+                });
+                subLinks.push({ href: finalDestinationUrl, text: '' });
+
                 const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|WEBRip|HDRip)/i);
                 const qualityName = qMatch ? qMatch[0].toUpperCase() : "WEB-DL";
                 const sMatch = item.text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
                 const size = sMatch ? sMatch[0] : "N/A";
 
-                // Process each link found in intermediate page
                 for (let j = 0; j < subLinks.length; j++) {
                     const linkObj = subLinks[j];
                     let targetUrl = linkObj.href;
                     const tLower = targetUrl.toLowerCase();
 
-                    if (tLower.includes('cinesubz.') || tLower.includes('facebook.com') || tLower.includes('youtube.com')) continue;
+                    if (tLower.includes('cinesubz.') && !tLower.includes('/api-') && !tLower.includes('space') && !tLower.includes('kdrive')) continue;
+                    if (tLower.includes('facebook.com') || tLower.includes('youtube.com')) continue;
 
-                    // Check if it's already a final link (PixelDrain, Telegram Bot, or direct file)
                     if (tLower.includes('pixeldrain') || tLower.endsWith('.mp4') || tLower.endsWith('.mkv') || (tLower.includes('t.me/') && tLower.includes('bot') && tLower.includes('start='))) {
                         let type = "Direct Server";
                         if (tLower.includes('pixeldrain')) type = "PixelDrain";
@@ -231,11 +248,10 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         const qualityLabel = qualityName + " [" + type + "]";
                         if (!downloads.some(d => d.link === targetUrl)) {
                             downloads.push({ quality: qualityLabel, size, language: "English", link: targetUrl });
-                            console.log(`   ✅ Final File Link Captured: [${qualityLabel}] -> ${targetUrl}`);
+                            console.log(`   ✅ Target File Link Captured: [${qualityLabel}] -> ${targetUrl}`);
                         }
                     } 
                     else if (tLower.includes('space') || tLower.includes('kdrive') || tLower.includes('csplayer') || tLower.includes('redirect')) {
-                        // If it's another player/redirect page, dive one level deeper to find the absolute final download button!
                         console.log(`   🚀 Deep diving into player page: ${targetUrl}`);
                         let playerPage;
                         try {
@@ -243,6 +259,9 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                             await playerPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
                             await playerPage.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
                             await new Promise(r => setTimeout(r, 1500));
+
+                            const playerBody = await playerPage.evaluate(() => document.body ? document.body.innerText : '');
+                            const pUrlMatches = playerBody.match(/https?:\/\/[^\s"'<>]+/g) || [];
 
                             const ultimateLinks = await playerPage.evaluate(() => {
                                 const uList = [];
@@ -255,11 +274,12 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                                 return uList;
                             });
 
+                            pUrlMatches.forEach(pu => ultimateLinks.push(pu));
                             await playerPage.close();
 
                             ultimateLinks.forEach(uLink => {
                                 const uLower = uLink.toLowerCase();
-                                if (uLower.includes('cinesubz.') || uLower.includes('facebook.com')) return;
+                                if (uLower.includes('cinesubz.') && !uLower.includes('space') && !uLower.includes('kdrive')) return;
 
                                 let finalType = "Direct High-Speed Server";
                                 if (uLower.includes('pixeldrain')) finalType = "PixelDrain";
@@ -281,7 +301,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
                 await subPage.close();
             } catch (subErr) {
-                console.error(`   ❌ Failed to scrape initial link: ${subErr.message}`);
+                console.error(`   ❌ Failed to scrape link: ${subErr.message}`);
                 if (subPage) await subPage.close();
             }
         }
