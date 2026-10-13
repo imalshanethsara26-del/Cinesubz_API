@@ -78,7 +78,7 @@ app.get('/api/v1/cinesubz/latest', async (req, res) => {
             }
         });
 
-        res.json({ status: true, creator: "IMALSHA API", site: "cinesubz", page: Number(pageNum), results_count: results.length, data: results });
+        res.json({ status: true, creator: "@Imalsha", site: "cinesubz", page: Number(pageNum), results_count: results.length, data: results });
     } catch (err) {
         res.status(500).json({ status: false, error: err.message });
     }
@@ -117,13 +117,13 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
             }
         });
 
-        res.json({ status: true, creator: "IMALSHA API", site: "cinesubz", results_count: results.length, data: results });
+        res.json({ status: true, creator: "@Imalsha", site: "cinesubz", results_count: results.length, data: results });
     } catch (err) {
         res.status(500).json({ status: false, error: err.message });
     }
 });
 
-// 3. Info & Download Endpoint (Smart Target: Enters intermediate page and extracts "Direct Download" buttons)
+// 3. Info & Download Endpoint (Extracting actual PixelDrain, Direct, and Telegram links from zt-links)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -152,20 +152,22 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 }
             });
 
-            // Grab all outbound links from the movie post
-            const redirectLinks = [];
+            // Collect all redirect / zt-links from movie post
+            const ztLinks = [];
             document.querySelectorAll('a').forEach(a => {
                 const href = a.href || '';
                 const txt = (a.innerText || '') + ' ' + (a.parentElement ? a.parentElement.innerText : '');
                 
-                if (href && !href.includes('cinesubz.net') && !href.includes('cinesubz.lk') && !href.includes('facebook.com') && !href.includes('telegram.org')) {
-                    if (!redirectLinks.some(d => d.url === href)) {
-                        redirectLinks.push({ url: href, text: txt });
+                if (href && (href.includes('zt-links') || href.includes('download') || href.includes('link') || href.includes('space'))) {
+                    if (!href.includes('cinesubz.net/movies/') && !href.includes('cinesubz.lk/movies/') && !href.includes('facebook.com') && !href.includes('telegram.org')) {
+                        if (!ztLinks.some(d => d.url === href)) {
+                            ztLinks.push({ url: href, text: txt });
+                        }
                     }
                 }
             });
 
-            return { title, image, quality, rating, director, story: story || 'No description available', redirectLinks };
+            return { title, image, quality, rating, director, story: story || 'No description available', ztLinks };
         });
 
         let year = "2026";
@@ -174,8 +176,9 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         const downloads = [];
 
-        for (let i = 0; i < pageData.redirectLinks.length; i++) {
-            const item = pageData.redirectLinks[i];
+        // Deep dive into each zt-link page to grab PixelDrain, Direct Servers & Telegram Bots
+        for (let i = 0; i < pageData.ztLinks.length; i++) {
+            const item = pageData.ztLinks[i];
             let subPage;
             try {
                 subPage = await browser.newPage();
@@ -183,21 +186,16 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 
                 await subPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
-                // Specifically look for buttons/links containing "Direct" or "Download" or direct media server links
-                const extractedLinks = await subPage.evaluate(() => {
-                    const links = [];
+                const extractedData = await subPage.evaluate(() => {
+                    const linksList = [];
                     document.querySelectorAll('a').forEach(a => {
                         const h = a.href || '';
-                        const t = (a.innerText || '').toLowerCase();
-                        
+                        const t = (a.innerText || '') + ' ' + (a.parentElement ? a.parentElement.innerText : '');
                         if (h && !h.includes('cinesubz')) {
-                            // Target links that have "direct", "download" in text, or point to servers/files
-                            if (t.includes('direct') || t.includes('download') || h.includes('space') || h.includes('pixeldrain') || h.endsWith('.mp4') || h.endsWith('.mkv')) {
-                                links.push({ href: h, text: a.innerText });
-                            }
+                            linksList.push({ href: h, text: t });
                         }
                     });
-                    return links;
+                    return linksList;
                 });
 
                 const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|WEBRip|HDRip)/i);
@@ -205,8 +203,8 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 const sMatch = item.text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
                 const size = sMatch ? sMatch[0] : "N/A";
 
-                extractedLinks.forEach(linkObj => {
-                    const link = linkObj.href;
+                extractedData.forEach(entry => {
+                    const link = entry.href;
                     if (link.includes('telegram.org') || link.includes('facebook.com')) return;
 
                     let isBotLink = link.includes('t.me/') || link.includes('telegram.me/');
