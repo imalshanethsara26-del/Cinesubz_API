@@ -70,7 +70,7 @@ app.get('/api/v1/cinesubz/latest', async (req, res) => {
             let rating = parent.find('.imdb-rate, .rating').text().trim();
             if (!rating) rating = 'N/A';
 
-            if (href.includes('cinesubz.net') && (href.includes('/movies/') || href.includes('/tvshows/')) && title.length > 2) {
+            if (href.includes('cinesubz.') && (href.includes('/movies/') || href.includes('/tvshows/')) && title.length > 2) {
                 title = title.replace(/\t|\n/g, '').trim();
                 if (!results.some(r => r.link === href)) {
                     results.push({ title, image: img, quality, rating, link: href });
@@ -109,7 +109,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
             if (!img) img = parent.find('img').attr('data-src');
             if (!img) img = '';
 
-            if (href.includes('cinesubz.net') && (href.includes('/movies/') || href.includes('/tvshows/')) && title.length > 2) {
+            if (href.includes('cinesubz.') && (href.includes('/movies/') || href.includes('/tvshows/')) && title.length > 2) {
                 title = title.replace(/\t|\n/g, '').trim();
                 if (!results.some(r => r.link === href)) {
                     results.push({ title, image: img, link: href });
@@ -123,7 +123,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Universal Link Scraper for both old and new movies)
+// 3. Info & Download Endpoint (Universal & Bulletproof Link Grabber)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -139,6 +139,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         await page.setViewport({ width: 1280, height: 800 });
 
         await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
+        await new Promise(r => setTimeout(r, 2000));
 
         const pageData = await page.evaluate(() => {
             const title = document.querySelector('meta[property="og:title"]')?.content || document.querySelector('h1')?.innerText || 'Unknown';
@@ -148,20 +149,19 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             const director = document.querySelector('span.director')?.innerText || 'N/A';
 
             let story = '';
-            document.querySelectorAll('.entry-content p, .su-spoiler-content p').forEach(p => {
+            document.querySelectorAll('p').forEach(p => {
                 const txt = p.innerText.trim();
                 if (txt.length > 30 && !txt.includes('උපසිරැසි') && !txt.includes('Download') && !story) {
                     story = txt;
                 }
             });
 
-            // Universal Link Grabber: Collects any outbound links inside post content, spoilers, or buttons
             const targetLinks = [];
-            document.querySelectorAll('.entry-content a, .su-spoiler-content a, article a, a.btn, .button a').forEach(a => {
+            document.querySelectorAll('a').forEach(a => {
                 const href = a.href || '';
                 const txt = (a.innerText || '') + ' ' + (a.parentElement ? a.parentElement.innerText : '');
                 
-                if (href && !href.includes('cinesubz.net/movies/') && !href.includes('cinesubz.lk/movies/') && !href.includes('facebook.com') && !href.includes('whatsapp.com') && !href.includes('account')) {
+                if (href && !href.includes('cinesubz.') && !href.includes('facebook.com') && !href.includes('whatsapp.com') && !href.includes('account') && !href.includes('wp-login')) {
                     if (!targetLinks.some(d => d.url === href)) {
                         targetLinks.push({ url: href, text: txt });
                     }
@@ -172,7 +172,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         });
 
         console.log(`🎬 Title: ${pageData.title}`);
-        console.log(`🔗 Found ${pageData.targetLinks.length} potential download/redirect link(s).`);
+        console.log(`🔗 Found ${pageData.targetLinks.length} potential link(s) on the page.`);
 
         let year = "2026";
         const yearMatch = pageData.title.match(/\((\d{4})\)/);
@@ -197,7 +197,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     document.querySelectorAll('a').forEach(a => {
                         const h = a.href || '';
                         const t = (a.innerText || '').trim();
-                        if (h && !h.includes('cinesubz')) {
+                        if (h && !h.includes('cinesubz.')) {
                             list.push({ href: h, text: t });
                         }
                     });
@@ -209,19 +209,18 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 const sMatch = item.text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
                 const size = sMatch ? sMatch[0] : "N/A";
 
-                // If the initial target link itself is a direct file/pixeldrain/telegram link
                 if (item.url.includes('pixeldrain') || item.url.includes('t.me/') || item.url.endsWith('.mp4') || item.url.endsWith('.mkv')) {
                     extractedLinks.push({ href: item.url, text: item.text });
                 }
 
-                for (let j = 0; j < extractedLinks.length; j++) {
-                    const link = extractedLinks[j].href;
+                extractedLinks.forEach(entry => {
+                    const link = entry.href;
 
-                    if (link.includes('cinesubz.net') || link.includes('cinesubz.lk') || link.includes('facebook.com') || link.includes('whatsapp.com')) continue;
-                    if (link.includes('telegram.org') && !link.includes('t.me') && !link.includes('telegram.me')) continue;
+                    if (link.includes('cinesubz.') || link.includes('facebook.com') || link.includes('whatsapp.com')) return;
+                    if (link.includes('telegram.org') && !link.includes('t.me') && !link.includes('telegram.me')) return;
 
                     let isBotLink = link.includes('t.me/') || link.includes('telegram.me/');
-                    if (isBotLink && !link.includes('bot') && !link.includes('start=')) continue;
+                    if (isBotLink && !link.includes('bot') && !link.includes('start=')) return;
 
                     let type = "Direct Server";
                     if (link.includes('pixeldrain')) type = "PixelDrain";
@@ -231,9 +230,9 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     const qualityLabel = qualityName + " [" + type + "]";
                     if (!downloads.some(d => d.link === link)) {
                         downloads.push({ quality: qualityLabel, size, language: "English", link });
-                        console.log(`   ✅ Extracted File Link: [${qualityLabel}] -> ${link}`);
+                        console.log(`   ✅ Extracted Link: [${qualityLabel}] -> ${link}`);
                     }
-                }
+                });
 
                 await subPage.close();
             } catch (subErr) {
