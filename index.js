@@ -123,7 +123,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Extracts actual download links inside CS Player pages, avoiding wrapper URLs)
+// 3. Info & Download Endpoint (Strictly Extracts Real Links Inside CS Player, excluding wrapper URLs)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -231,21 +231,22 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     let linkText = linkObj.text.toLowerCase();
                     const tLower = targetUrl.toLowerCase();
 
-                    // Exclude wrapper URLs, ads, social media, cinesubz main site
-                    if (tLower.includes('csplayer2.space') && !tLower.includes('server') && !tLower.includes('download')) return;
+                    // EXCLUDE csplayer wrapper URLs so they never get added as final links
+                    if (tLower.includes('csplayer2.space') || tLower.includes('space') || tLower.includes('kdrive')) return;
                     if (tLower.includes('facebook.com') || tLower.includes('youtube.com') || tLower.includes('cinesubz.net/movies')) return;
 
-                    // Capture only real download destinations (PixelDrain, Telegram Bot, Direct File servers)
+                    // Capture ONLY real download destinations (PixelDrain, Telegram Bot, Direct File servers)
                     if (tLower.includes('pixeldrain') || tLower.includes('t.me/') || tLower.endsWith('.mp4') || tLower.endsWith('.mkv') || tLower.includes('download') || linkText.includes('download') || linkText.includes('telegram')) {
                         
-                        let type = "Direct High-Speed Server";
+                        let type = "Direct Server";
                         if (tLower.includes('pixeldrain') || linkText.includes('pixeldrain')) type = "PixelDrain";
                         else if (tLower.includes('t.me/') || linkText.includes('telegram')) type = "Telegram Bot";
+                        else type = "Direct High-Speed Server";
 
                         const qualityLabel = qualityName + " [" + type + "]";
                         if (!downloads.some(d => d.link === targetUrl)) {
                             downloads.push({ quality: qualityLabel, size, language: "English", link: targetUrl });
-                            console.log(`   ✅ Actual Download Link Captured: [${qualityLabel}] -> ${targetUrl}`);
+                            console.log(`   ✅ Real Download Link Captured: [${qualityLabel}] -> ${targetUrl}`);
                         }
                     }
                 });
