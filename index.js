@@ -31,7 +31,7 @@ async function getBrowser() {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ API is Live 🚀",
+        message: "IMALSHA CINESUBZ CUSTOM API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -123,13 +123,13 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Enters CS Player page and extracts inner true download/telegram links)
+// 3. Custom Info & Download Endpoint (Full Independent Puppeteer Deep-Dive Scraper)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔍 [API LOG] Processing InfoDL Request for: ${movieUrl}`);
+    console.log(`🔍 [CUSTOM API] Processing Movie URL: ${movieUrl}`);
 
     let browser;
     try {
@@ -141,6 +141,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
         await new Promise(r => setTimeout(r, 2000));
 
+        // Extract movie details and initial redirect/zt-links from main page
         const pageData = await page.evaluate(() => {
             const title = document.querySelector('meta[property="og:title"]')?.content || document.querySelector('h1')?.innerText || 'Unknown';
             const image = document.querySelector('meta[property="og:image"]')?.content || '';
@@ -175,7 +176,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         });
 
         console.log(`🎬 Title: ${pageData.title}`);
-        console.log(`🔗 Found ${pageData.initialLinks.length} initial link(s).`);
+        console.log(`🔗 Found ${pageData.initialLinks.length} initial redirect link(s).`);
 
         let year = "2026";
         const yearMatch = pageData.title.match(/\((\d{4})\)/);
@@ -183,6 +184,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         const downloads = [];
 
+        // Loop through each initial link and navigate through timer & CS Player page
         for (let i = 0; i < pageData.initialLinks.length; i++) {
             const item = pageData.initialLinks[i];
             console.log(`\n⏳ Navigating Link ${i + 1}/${pageData.initialLinks.length}: ${item.url}`);
@@ -192,9 +194,10 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 subPage = await browser.newPage();
                 await subPage.setUserAgent(HEADERS['User-Agent']);
                 
+                // Go to timer/redirect page
                 await subPage.goto(item.url, { waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
                 
-                // Handle timer / redirect pages
+                // Wait for timer and click "Go to Download Page"
                 try {
                     await new Promise(r => setTimeout(r, 2000));
                     await subPage.evaluate(() => {
@@ -205,10 +208,11 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                             }
                         });
                     });
-                    await new Promise(r => setTimeout(r, 4000)); // Wait for CS Player page to fully load buttons
+                    // Wait for CS Player page to fully load and render asynchronous download buttons
+                    await new Promise(r => setTimeout(r, 5000)); 
                 } catch (e) {}
 
-                // Now we are on the CS Player page. Let's extract all anchor links inside this page!
+                // Extract all anchor links inside the CS Player page
                 const csPlayerInternalLinks = await subPage.evaluate(() => {
                     const list = [];
                     document.querySelectorAll('a').forEach(a => {
@@ -231,11 +235,11 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     let linkText = linkObj.text.toLowerCase();
                     const tLower = targetUrl.toLowerCase();
 
-                    // Exclude social media and cinesubz info pages
+                    // Filter out unwanted links (ads, social media, self wrappers)
                     if (tLower.includes('facebook.com') || tLower.includes('youtube.com') || tLower.includes('cinesubz.net/movies')) return;
 
-                    // If the link inside CS player is PixelDrain, Telegram Bot, or Direct download file link
-                    if (tLower.includes('pixeldrain') || tLower.includes('t.me/') || tLower.endsWith('.mp4') || tLower.endsWith('.mkv') || tLower.includes('download') || linkText.includes('download') || linkText.includes('telegram')) {
+                    // Capture actual download links (PixelDrain, Telegram Bot, Direct Server files)
+                    if (tLower.includes('pixeldrain') || tLower.includes('t.me/') || tLower.includes('space') || tLower.includes('kdrive') || tLower.endsWith('.mp4') || tLower.endsWith('.mkv') || tLower.includes('download') || linkText.includes('download') || linkText.includes('telegram')) {
                         
                         let type = "Direct High-Speed Server";
                         if (tLower.includes('pixeldrain') || linkText.includes('pixeldrain')) type = "PixelDrain";
@@ -244,14 +248,14 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         const qualityLabel = qualityName + " [" + type + "]";
                         if (!downloads.some(d => d.link === targetUrl)) {
                             downloads.push({ quality: qualityLabel, size, language: "English", link: targetUrl });
-                            console.log(`   ✅ True Inner Download Link Captured: [${qualityLabel}] -> ${targetUrl}`);
+                            console.log(`   ✅ Captured Final Link: [${qualityLabel}] -> ${targetUrl}`);
                         }
                     }
                 });
 
                 await subPage.close();
             } catch (subErr) {
-                console.error(`   ❌ Failed to scrape link: ${subErr.message}`);
+                console.error(`   ❌ Failed to process sub-page: ${subErr.message}`);
                 if (subPage) await subPage.close();
             }
         }
@@ -289,10 +293,10 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         });
 
     } catch (err) {
-        console.error(`❌ Critical InfoDL Error: ${err.message}`);
+        console.error(`❌ Critical Custom API Error: ${err.message}`);
         if (browser) await browser.close();
         res.status(500).json({ status: false, error: err.message });
     }
 });
 
-app.listen(PORT, () => console.log(`Cinesubz API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Cinesubz Custom API running on port ${PORT}`));
