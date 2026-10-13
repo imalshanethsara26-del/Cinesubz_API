@@ -33,13 +33,52 @@ app.get('/', (req, res) => {
         status: true,
         message: "IMALSHA CINESUBZ API is Live 🚀",
         endpoints: {
+            latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
             infodl: "/api/v1/cinesubz/infodl?url=movie_url"
         }
     });
 });
 
-// Search Endpoint (ඔයා දුන්න කෝඩ් එකේ වැඩ කරන Search ලොජික් එක)
+// 1. Latest Movies Endpoint (හෝම් පේජ් එකේ අලුත්ම මූවීස් පෙන්වීම සඳහා)
+app.get('/api/v1/cinesubz/latest', async (req, res) => {
+    try {
+        const pageNum = req.query.page || 1;
+        const latestUrl = pageNum == 1 ? "https://cinesubz.net/" : `https://cinesubz.net/page/${pageNum}/`;
+        
+        const response = await axios.get(latestUrl, { headers: HEADERS, timeout: 15000 });
+        const $ = cheerio.load(response.data);
+        const results = [];
+
+        $('a').each((i, el) => {
+            const href = $(el).attr('href') || '';
+            const parent = $(el).closest('article, .post, .item, div');
+            
+            let title = $(el).find('h2, h3, .title').text().trim();
+            if (!title) title = $(el).attr('title') || '';
+            if (!title) title = $(el).text().trim();
+
+            let img = $(el).find('img').attr('src') \vert{}\vert{}$(el).find('img').attr('data-src') || '';
+            if (!img) img = parent.find('img').attr('src') || parent.find('img').attr('data-src') || '';
+
+            let quality = parent.find('.quality, .badge').text().trim() || 'WEB-DL';
+            let rating = parent.find('.imdb-rate, .rating').text().trim() || 'N/A';
+
+            if (href.includes('cinesubz.net') && (href.includes('/movies/') || href.includes('/tvshows/')) && title.length > 2) {
+                title = title.replace(/\t|\n/g, '').trim();
+                if (!results.some(r => r.link === href)) {
+                    results.push({ title, image: img, quality, rating, link: href });
+                }
+            }
+        });
+
+        res.json({ status: true, creator: "IMALSHA API", site: "cinesubz", page: Number(pageNum), results_count: results.length, data: results });
+    } catch (err) {
+        res.status(500).json({ status: false, error: err.message });
+    }
+});
+
+// 2. Search Endpoint
 app.get('/api/v1/cinesubz/search', async (req, res) => {
     try {
         const query = req.query.q;
@@ -58,10 +97,8 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
             if (!title) title = $(el).attr('title') || '';
             if (!title) title = $(el).text().trim();
 
-            let img = $(el).find('img').attr('src');
-            if (!img) img = $(el).find('img').attr('data-src');
-            if (!img) img = parent.find('img').attr('src');
-            if (!img) img = parent.find('img').attr('data-src') || '';
+            let img = $(el).find('img').attr('src') \vert{}\vert{}$(el).find('img').attr('data-src') || '';
+            if (!img) img = parent.find('img').attr('src') || parent.find('img').attr('data-src') || '';
 
             if (href.includes('cinesubz.net') && (href.includes('/movies/') || href.includes('/tvshows/')) && title.length > 2) {
                 title = title.replace(/\t|\n/g, '').trim();
@@ -77,7 +114,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Info & Download Endpoint (අපේ සාර්ථක Puppeteer High-Speed Download ලොජික් එක)
+// 3. Info & Download Endpoint (Puppeteer High-Speed Logic)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
