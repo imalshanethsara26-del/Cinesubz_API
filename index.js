@@ -1,4 +1,6 @@
 const express = require('express');
+const axios = require('axios');
+const cheerio = require('cheerio');
 const puppeteer = require('puppeteer');
 const cors = require('cors');
 
@@ -6,6 +8,10 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
+
+const HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+};
 
 async function getBrowser() {
     return await puppeteer.launch({
@@ -33,57 +39,45 @@ app.get('/', (req, res) => {
     });
 });
 
-// Search Endpoint (Puppeteer හරහා Cloudflare මඟහරවා නිවැරදිව සර්ච් කිරීම)
+// Search Endpoint (ඔයා දුන්න කෝඩ් එකේ වැඩ කරන Search ලොජික් එක)
 app.get('/api/v1/cinesubz/search', async (req, res) => {
-    const query = req.query.q;
-    if (!query) return res.status(400).json({ status: false, message: "Search term required" });
-
-    let browser;
     try {
-        browser = await getBrowser();
-        const page = await browser.newPage();
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+        const query = req.query.q;
+        if (!query) return res.status(400).json({ status: false, message: "Search term required" });
 
-        const searchUrl = "https://cinesubz.lk/?s=" + encodeURIComponent(query);
-        await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+        const searchUrl = "https://cinesubz.net/?s=" + encodeURIComponent(query);
+        const response = await axios.get(searchUrl, { headers: HEADERS, timeout: 10000 });
+        const $ = cheerio.load(response.data);
+        const results = [];
 
-        const results = await page.evaluate(() => {
-            const list = [];
-            document.querySelectorAll('a').forEach(el => {
-                let href = el.href;
-                if (href === 'https://cinesubz.lk/movies/' || href === 'https://cinesubz.lk/tvshows/' || href === 'https://cinesubz.lk/') {
-                    return;
+        $('a').each((i, el) => {
+            const href = $(el).attr('href') || '';
+            const parent = $(el).closest('article, .post, .item, div');
+            
+            let title = $(el).find('h2, h3, .title').text().trim();
+            if (!title) title = $(el).attr('title') || '';
+            if (!title) title = $(el).text().trim();
+
+            let img = $(el).find('img').attr('src');
+            if (!img) img = $(el).find('img').attr('data-src');
+            if (!img) img = parent.find('img').attr('src');
+            if (!img) img = parent.find('img').attr('data-src') || '';
+
+            if (href.includes('cinesubz.net') && (href.includes('/movies/') || href.includes('/tvshows/')) && title.length > 2) {
+                title = title.replace(/\t|\n/g, '').trim();
+                if (!results.some(r => r.link === href)) {
+                    results.push({ title, image: img, link: href });
                 }
-                if (href && href.includes('cinesubz.lk') && (href.includes('/movies/') || href.includes('/tvshows/'))) {
-                    let title = el.querySelector('h2, h3, .title, .entry-title')?.innerText || el.innerText || '';
-                    let img = el.querySelector('img')?.src || '';
-                    if (!img) {
-                        const parent = el.closest('article, .post, .item, div');
-                        if (parent) {
-                            img = parent.querySelector('img')?.src || '';
-                        }
-                    }
-                    if (title && title.trim().length > 2 && !title.includes('All Movies') && !title.includes('TV Shows')) {
-                        title = title.trim().replace(/\t|\n/g, '');
-                        if (!list.some(r => r.link === href)) {
-                            list.push({ title, image: img, link: href });
-                        }
-                    }
-                }
-            });
-            return list;
+            }
         });
 
-        await browser.close();
         res.json({ status: true, creator: "IMALSHA API", site: "cinesubz", results_count: results.length, data: results });
-
     } catch (err) {
-        if (browser) await browser.close();
         res.status(500).json({ status: false, error: err.message });
     }
 });
 
-// Info & Download Endpoint (අපේ සාර්ථක වූ Puppeteer Direct High-Speed Download ලොජික් එක)
+// Info & Download Endpoint (අපේ සාර්ථක Puppeteer High-Speed Download ලොජික් එක)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -182,13 +176,28 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         res.json({
             status: true,
-            creator: "IMALSHA API",
+            creator: "@Imalsha",
             site: "cinesubz",
+            url: movieUrl,
             data: {
                 title: pageData.title,
-                imdb_rating: pageData.rating,
-                story: pageData.story,
                 image: pageData.image,
+                quality: pageData.quality,
+                rating: pageData.rating,
+                imdb: pageData.rating + " (N/A)",
+                director: pageData.director,
+                language: "ENGLISH",
+                genres: ["Action", "Adventure", "English", "Sinhala Subtitles"],
+                story: pageData.story,
+                cast: [],
+                gallery: [],
+                trailer: "https://www.youtube.com/@cinesubz",
+                year,
+                duration: "N/A",
+                tag: "English",
+                directors: pageData.director,
+                stars: "N/A",
+                country: "Sri Lanka / Global",
                 downloads
             }
         });
