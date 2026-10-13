@@ -123,7 +123,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Deep extraction: Enters zt-links and extracts actual Direct/PixelDrain file links)
+// 3. Info & Download Endpoint (Universal Link Scraper for both old and new movies)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -155,26 +155,24 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 }
             });
 
-            // Grab zt-links
-            const ztLinks = [];
-            document.querySelectorAll('a').forEach(a => {
+            // Universal Link Grabber: Collects any outbound links inside post content, spoilers, or buttons
+            const targetLinks = [];
+            document.querySelectorAll('.entry-content a, .su-spoiler-content a, article a, a.btn, .button a').forEach(a => {
                 const href = a.href || '';
                 const txt = (a.innerText || '') + ' ' + (a.parentElement ? a.parentElement.innerText : '');
                 
-                if (href && (href.includes('zt-links') || href.includes('download'))) {
-                    if (!href.includes('account') && !href.includes('cinesubz.net/movies/') && !href.includes('cinesubz.lk/movies/')) {
-                        if (!ztLinks.some(d => d.url === href)) {
-                            ztLinks.push({ url: href, text: txt });
-                        }
+                if (href && !href.includes('cinesubz.net/movies/') && !href.includes('cinesubz.lk/movies/') && !href.includes('facebook.com') && !href.includes('whatsapp.com') && !href.includes('account')) {
+                    if (!targetLinks.some(d => d.url === href)) {
+                        targetLinks.push({ url: href, text: txt });
                     }
                 }
             });
 
-            return { title, image, quality, rating, director, story: story || 'No description available', ztLinks };
+            return { title, image, quality, rating, director, story: story || 'No description available', targetLinks };
         });
 
         console.log(`🎬 Title: ${pageData.title}`);
-        console.log(`🔗 Found ${pageData.ztLinks.length} zt-link(s).`);
+        console.log(`🔗 Found ${pageData.targetLinks.length} potential download/redirect link(s).`);
 
         let year = "2026";
         const yearMatch = pageData.title.match(/\((\d{4})\)/);
@@ -182,9 +180,9 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         const downloads = [];
 
-        for (let i = 0; i < pageData.ztLinks.length; i++) {
-            const item = pageData.ztLinks[i];
-            console.log(`\n⏳ Checking ZT-Link ${i + 1}/${pageData.ztLinks.length}: ${item.url}`);
+        for (let i = 0; i < pageData.targetLinks.length; i++) {
+            const item = pageData.targetLinks[i];
+            console.log(`\n⏳ Checking Link ${i + 1}/${pageData.targetLinks.length}: ${item.url}`);
             
             let subPage;
             try {
@@ -194,8 +192,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 await subPage.goto(item.url, { waitUntil: 'networkidle2', timeout: 25000 }).catch(() => {});
                 await new Promise(r => setTimeout(r, 2000));
 
-                // Extract all outbound links inside the ZT page (this usually contains csplayer/space or direct file links)
-                const intermediateLinks = await subPage.evaluate(() => {
+                const extractedLinks = await subPage.evaluate(() => {
                     const list = [];
                     document.querySelectorAll('a').forEach(a => {
                         const h = a.href || '';
@@ -212,64 +209,35 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 const sMatch = item.text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
                 const size = sMatch ? sMatch[0] : "N/A";
 
-                // Now, if the link points to a player/space page, let's deep-dive one step further to get the real file link!
-                for (let j = 0; j < intermediateLinks.length; j++) {
-                    const intLink = intermediateLinks[j].href;
+                // If the initial target link itself is a direct file/pixeldrain/telegram link
+                if (item.url.includes('pixeldrain') || item.url.includes('t.me/') || item.url.endsWith('.mp4') || item.url.endsWith('.mkv')) {
+                    extractedLinks.push({ href: item.url, text: item.text });
+                }
 
-                    if (intLink.includes('pixeldrain') || intLink.endsWith('.mp4') || intLink.endsWith('.mkv') || intLink.includes('telegram.me') || intLink.includes('t.me')) {
-                        // Direct file / bot link found immediately
-                        let type = "Direct Server";
-                        if (intLink.includes('pixeldrain')) type = "PixelDrain";
-                        else if (intLink.includes('t.me/')) type = "Telegram Bot";
+                for (let j = 0; j < extractedLinks.length; j++) {
+                    const link = extractedLinks[j].href;
 
-                        const qualityLabel = qualityName + " [" + type + "]";
-                        if (!downloads.some(d => d.link === intLink)) {
-                            downloads.push({ quality: qualityLabel, size, language: "English", link: intLink });
-                            console.log(`   ✅ Direct File Link Found: [${qualityLabel}] -> ${intLink}`);
-                        }
-                    } else if (intLink.includes('space') || intLink.includes('kdrive') || intLink.includes('csplayer')) {
-                        // It's a player page, let's open it to grab the actual download button link inside it!
-                        console.log(`   🚀 Entering Player Page: ${intLink}`);
-                        let playerPage;
-                        try {
-                            playerPage = await browser.newPage();
-                            await playerPage.goto(intLink, { waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
-                            await new Promise(r => setTimeout(r, 1500));
+                    if (link.includes('cinesubz.net') || link.includes('cinesubz.lk') || link.includes('facebook.com') || link.includes('whatsapp.com')) continue;
+                    if (link.includes('telegram.org') && !link.includes('t.me') && !link.includes('telegram.me')) continue;
 
-                            const realFileLinks = await playerPage.evaluate(() => {
-                                const rList = [];
-                                document.querySelectorAll('a').forEach(el => {
-                                    const h = el.href || '';
-                                    const txt = (el.innerText || '').toLowerCase();
-                                    if (h && (txt.includes('download') || h.includes('pixeldrain') || h.endsWith('.mp4') || h.endsWith('.mkv'))) {
-                                        rList.push(h);
-                                    }
-                                });
-                                return rList;
-                            });
+                    let isBotLink = link.includes('t.me/') || link.includes('telegram.me/');
+                    if (isBotLink && !link.includes('bot') && !link.includes('start=')) continue;
 
-                            playerPage.close();
+                    let type = "Direct Server";
+                    if (link.includes('pixeldrain')) type = "PixelDrain";
+                    else if (isBotLink) type = "Telegram Bot";
+                    else if (link.includes('space') || link.includes('kdrive') || link.includes('csplayer') || link.endsWith('.mp4') || link.endsWith('.mkv')) type = "Direct High-Speed Server";
 
-                            realFileLinks.forEach(rfLink => {
-                                if (rfLink.includes('cinesubz')) return;
-                                let type = "Direct High-Speed Server";
-                                if (rfLink.includes('pixeldrain')) type = "PixelDrain";
-
-                                const qualityLabel = qualityName + " [" + type + "]";
-                                if (!downloads.some(d => d.link === rfLink)) {
-                                    downloads.push({ quality: qualityLabel, size, language: "English", link: rfLink });
-                                    console.log(`   ✅ Extracted Real File from Player: [${qualityLabel}] -> ${rfLink}`);
-                                }
-                            });
-                        } catch (pe) {
-                            if (playerPage) await playerPage.close();
-                        }
+                    const qualityLabel = qualityName + " [" + type + "]";
+                    if (!downloads.some(d => d.link === link)) {
+                        downloads.push({ quality: qualityLabel, size, language: "English", link });
+                        console.log(`   ✅ Extracted File Link: [${qualityLabel}] -> ${link}`);
                     }
                 }
 
                 await subPage.close();
             } catch (subErr) {
-                console.error(`   ❌ Failed to scrape ZT-page: ${subErr.message}`);
+                console.error(`   ❌ Failed to scrape link: ${subErr.message}`);
                 if (subPage) await subPage.close();
             }
         }
