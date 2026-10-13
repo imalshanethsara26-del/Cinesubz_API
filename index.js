@@ -70,7 +70,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Info & Download Endpoint
+// Info & Download Endpoint (නිවැරදි Path එක හරහා සැබෑ ඩවුන්ලෝඩ් ලින්ක්ස් ලබා ගැනීම)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     try {
         const movieUrl = req.query.url;
@@ -143,7 +143,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         });
 
-        // Downloads Extraction
+        // Downloads Extraction via zt-links -> csplayer redirect path
         const downloads = [];
         const ztLinksToFetch = [];
 
@@ -165,7 +165,11 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         for (const item of ztLinksToFetch) {
             try {
-                const ztRes = await axios.get(item.url, { headers: HEADERS, timeout: 15000 });
+                // 1. Fetch zt-links page
+                const ztRes = await axios.get(item.url, { 
+                    headers: { ...HEADERS, 'Referer': movieUrl }, 
+                    timeout: 15000 
+                });
                 const ztHtml = ztRes.data;
                 const $zt = cheerio.load(ztHtml);
                 
@@ -173,8 +177,8 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 $zt('a').each((i, el) => {
                     let h = $zt(el).attr('href');
                     if (!h) h = '';
-                    if (h && !h.includes('cinesubz.net') && (h.startsWith('http') || h.startsWith('//'))) {
-                        if (h.startsWith('//')) h = 'https:' + h;
+                    if (h.startsWith('//')) h = 'https:' + h;
+                    if (h && !h.includes('cinesubz.net') && (h.includes('space') || h.includes('redirect') || h.startsWith('http'))) {
                         redirectUrl = h;
                     }
                 });
@@ -189,21 +193,32 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 }
 
                 if (redirectUrl) {
-                    const finalRes = await axios.get(redirectUrl, { headers: HEADERS, timeout: 15000 });
+                    // 2. Fetch final csplayer redirect page
+                    const finalRes = await axios.get(redirectUrl, { 
+                        headers: { ...HEADERS, 'Referer': item.url }, 
+                        timeout: 15000 
+                    });
                     const finalHtml = finalRes.data;
                     const $final = cheerio.load(finalHtml);
 
-                    // 1. Scrape <a> tags
+                    // Extract all <a> links
                     $final('a').each((i, el) => {
                         let link = $final(el).attr('href');
                         if (!link) link = '';
                         if (link.startsWith('//')) link = 'https:' + link;
 
-                        if (link && !link.includes('cinesubz.net') && !link.includes('CineSubzAdmin') && !link.includes('javascript')) {
+                        // Valid links filtering (Exclude telegram.org share/login links, include telegram bot links and direct servers)
+                        if (link && !link.includes('cinesubz.net') && !link.includes('CineSubzAdmin') && !link.includes('javascript') && !link.includes('telegram.org')) {
+                            
+                            let isBotLink = link.includes('t.me/') || link.includes('telegram.me/');
+                            if (isBotLink && !link.includes('bot') && !link.includes('start=')) {
+                                return; // Skip non-bot telegram links
+                            }
+
                             let type = "Direct Server";
                             if (link.includes('pixeldrain')) {
                                 type = "PixelDrain";
-                            } else if (link.includes('telegram') || link.includes('t.me') || link.includes('telegram.me')) {
+                            } else if (isBotLink) {
                                 type = "Telegram Bot";
                             } else if (link.includes('space') || link.includes('kdrive')) {
                                 type = "Direct High-Speed Server";
@@ -221,16 +236,25 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         }
                     });
 
-                    // 2. Scrape via Regex on final page HTML/Scripts for Pixeldrain / Direct links
-                    const linkRegex = /https?:\/\/[^\s"'<>]+\b(?:pixeldrain|mega|drive|download|file|stream|get|space|kdrive)[^\s"'<>]*/gi;
+                    // Regex scan on final page script/HTML
+                    const linkRegex = /https?:\/\/[^\s"'<>]+\b(?:pixeldrain|mega|drive|download|file|stream|get|space|kdrive|telegram\.me|t\.me)[^\s"'<>]*/gi;
                     const regexMatches = finalHtml.match(linkRegex);
                     if (regexMatches) {
                         regexMatches.forEach(l => {
-                            if (!l.includes('cinesubz.net') && !l.includes('CineSubzAdmin')) {
+                            if (!l.includes('cinesubz.net') && !l.includes('CineSubzAdmin') && !l.includes('telegram.org')) {
+                                let isBotLink = l.includes('t.me/') || l.includes('telegram.me/');
+                                if (isBotLink && !l.includes('bot') && !l.includes('start=')) {
+                                    return;
+                                }
+
                                 let type = "Direct Server";
-                                if (l.includes('pixeldrain')) type = "PixelDrain";
-                                else if (l.includes('space') || l.includes('kdrive')) type = "Direct High-Speed Server";
-                                else if (l.includes('telegram') || l.includes('t.me')) type = "Telegram Bot";
+                                if (l.includes('pixeldrain')) {
+                                    type = "PixelDrain";
+                                } else if (isBotLink) {
+                                    type = "Telegram Bot";
+                                } else if (l.includes('space') || l.includes('kdrive')) {
+                                    type = "Direct High-Speed Server";
+                                }
 
                                 let downloadName = item.quality + " [" + type + "]";
                                 if (!downloads.some(d => d.link === l)) {
@@ -246,26 +270,8 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     }
                 }
             } catch (err) {
-                // Ignore nested error
+                // Ignore nested fetch errors
             }
-        }
-
-        // Fallback: If downloads array is empty, grab any direct links from main movie page
-        if (downloads.length === 0) {
-            $('a').each((i, el) => {
-                let href = $(el).attr('href');
-                if (!href) href = '';
-                if (href.startsWith('//')) href = 'https:' + href;
-
-                if (href && (href.includes('pixeldrain') || href.includes('supercloud') || href.includes('space')) && !href.includes('cinesubz.net')) {
-                    downloads.push({
-                        quality: "WEB-DL [Direct Server]",
-                        size: "N/A",
-                        language: "English",
-                        link: href
-                    });
-                }
-            });
         }
 
         res.json({
