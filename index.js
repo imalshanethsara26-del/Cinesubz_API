@@ -1,6 +1,4 @@
 const express = require('express');
-const axios = require('axios');
-const cheerio = require('cheerio');
 const puppeteer = require('puppeteer');
 const cors = require('cors');
 
@@ -8,10 +6,6 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
-
-const HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-};
 
 async function getBrowser() {
     return await puppeteer.launch({
@@ -39,65 +33,57 @@ app.get('/', (req, res) => {
     });
 });
 
-// Fixed Search Endpoint (Safe Logic without operator issues)
+// Fixed Search Endpoint (Puppeteer හරහා Cloudflare පන්නා සර්ච් කිරීම)
 app.get('/api/v1/cinesubz/search', async (req, res) => {
+    const query = req.query.q;
+    if (!query) return res.status(400).json({ status: false, message: "Search term required" });
+
+    let browser;
     try {
-        const query = req.query.q;
-        if (!query) return res.status(400).json({ status: false, message: "Search term required" });
+        browser = await getBrowser();
+        const page = await browser.newPage();
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
 
         const searchUrl = "https://cinesubz.lk/?s=" + encodeURIComponent(query);
-        const response = await axios.get(searchUrl, { headers: HEADERS, timeout: 15000 });
-        const $ = cheerio.load(response.data);
-        const results = [];
+        await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
-        $('a').each((i, el) => {
-            let href = $(el).attr('href');
-            if (!href) href = '';
-            
-            if (href === 'https://cinesubz.lk/movies/' || href === 'https://cinesubz.lk/tvshows/' || href === 'https://cinesubz.lk/') {
-                return;
-            }
-
-            if (href.includes('cinesubz.lk') && (href.includes('/movies/') || href.includes('/tvshows/'))) {
-                let title = $(el).find('h2, h3, .title').text().trim();
-                if (!title) {
-                    title = $(el).attr('title');
-                }
-                if (!title) {
-                    title = $(el).text().trim();
-                }
-
-                let img = $(el).find('img').attr('src');
-                if (!img) {
-                    img = $(el).find('img').attr('data-src');
-                }
-                if (!img) {
-                    const parent = $(el).closest('article, .post, .item, div');
-                    img = parent.find('img').attr('src');
+        const results = await page.evaluate(() => {
+            const list = [];
+            document.querySelectorAll('a').forEach(el => {
+                let href = el.href;
+                if (href && href.includes('cinesubz.lk') && (href.includes('/movies/') || href.includes('/tvshows/'))) {
+                    let title = el.querySelector('h2, h3, .title, .entry-title')?.innerText || el.innerText || '';
+                    let img = el.querySelector('img')?.src || '';
                     if (!img) {
-                        img = parent.find('img').attr('data-src');
+                        const parent = el.closest('article, .post, .item, div');
+                        if (parent) {
+                            img = parent.querySelector('img')?.src || '';
+                            if (!title || title.trim().length < 2) {
+                                title = parent.querySelector('h2, h3, .title')?.innerText || title;
+                            }
+                        }
+                    }
+                    if (title && title.trim().length > 2) {
+                        title = title.trim().replace(/\t|\n/g, '');
+                        if (!list.some(r => r.link === href)) {
+                            list.push({ title, image: img, link: href });
+                        }
                     }
                 }
-                if (!img) {
-                    img = '';
-                }
-
-                if (title && title.length > 2 && !title.includes('All Movies') && !title.includes('TV Shows')) {
-                    title = title.replace(/\t|\n/g, '').trim();
-                    if (!results.some(r => r.link === href)) {
-                        results.push({ title, image: img, link: href });
-                    }
-                }
-            }
+            });
+            return list;
         });
 
-        res.json({ status: true, creator: "IMALSHA API", site: "cinesubz", results_count: results.length, data: results });
+        await browser.close();
+        res.json({ status: true, creator: "@Imalsha", site: "cinesubz", results_count: results.length, data: results });
+
     } catch (err) {
+        if (browser) await browser.close();
         res.status(500).json({ status: false, error: err.message });
     }
 });
 
-// Info & Download Endpoint
+// Info & Download Endpoint (ඔයාගේ වැඩ කරන සාර්ථක ඩවුන්ලෝඩ් ලොජික් එක එලෙසම ඇත)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
