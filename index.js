@@ -33,7 +33,7 @@ app.get('/', (req, res) => {
     });
 });
 
-// Fixed Search Endpoint (Puppeteer හරහා Cloudflare පන්නා සර්ච් කිරීම)
+// Search Endpoint (Puppeteer හරහා Cloudflare මඟහරවා නිවැරදිව සර්ච් කිරීම)
 app.get('/api/v1/cinesubz/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.status(400).json({ status: false, message: "Search term required" });
@@ -51,6 +51,9 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
             const list = [];
             document.querySelectorAll('a').forEach(el => {
                 let href = el.href;
+                if (href === 'https://cinesubz.lk/movies/' || href === 'https://cinesubz.lk/tvshows/' || href === 'https://cinesubz.lk/') {
+                    return;
+                }
                 if (href && href.includes('cinesubz.lk') && (href.includes('/movies/') || href.includes('/tvshows/'))) {
                     let title = el.querySelector('h2, h3, .title, .entry-title')?.innerText || el.innerText || '';
                     let img = el.querySelector('img')?.src || '';
@@ -58,12 +61,9 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
                         const parent = el.closest('article, .post, .item, div');
                         if (parent) {
                             img = parent.querySelector('img')?.src || '';
-                            if (!title || title.trim().length < 2) {
-                                title = parent.querySelector('h2, h3, .title')?.innerText || title;
-                            }
                         }
                     }
-                    if (title && title.trim().length > 2) {
+                    if (title && title.trim().length > 2 && !title.includes('All Movies') && !title.includes('TV Shows')) {
                         title = title.trim().replace(/\t|\n/g, '');
                         if (!list.some(r => r.link === href)) {
                             list.push({ title, image: img, link: href });
@@ -75,7 +75,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
         });
 
         await browser.close();
-        res.json({ status: true, creator: "@Imalsha", site: "cinesubz", results_count: results.length, data: results });
+        res.json({ status: true, creator: "IMALSHA API", site: "cinesubz", results_count: results.length, data: results });
 
     } catch (err) {
         if (browser) await browser.close();
@@ -83,7 +83,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Info & Download Endpoint (ඔයාගේ වැඩ කරන සාර්ථක ඩවුන්ලෝඩ් ලොජික් එක එලෙසම ඇත)
+// Info & Download Endpoint (අපේ සාර්ථක වූ Puppeteer Direct High-Speed Download ලොජික් එක)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -182,28 +182,13 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         res.json({
             status: true,
-            creator: "@Imalsha",
+            creator: "IMALSHA API",
             site: "cinesubz",
-            url: movieUrl,
             data: {
                 title: pageData.title,
-                image: pageData.image,
-                quality: pageData.quality,
-                rating: pageData.rating,
-                imdb: pageData.rating + " (N/A)",
-                director: pageData.director,
-                language: "ENGLISH",
-                genres: ["Action", "Adventure", "English", "Sinhala Subtitles"],
+                imdb_rating: pageData.rating,
                 story: pageData.story,
-                cast: [],
-                gallery: [],
-                trailer: "https://www.youtube.com/@cinesubz",
-                year,
-                duration: "N/A",
-                tag: "English",
-                directors: pageData.director,
-                stars: "N/A",
-                country: "Sri Lanka / Global",
+                image: pageData.image,
                 downloads
             }
         });
