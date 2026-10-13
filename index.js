@@ -70,7 +70,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Info & Download Endpoint (නිවැරදි Path එක හරහා සැබෑ ඩවුන්ලෝඩ් ලින්ක්ස් ලබා ගැනීම)
+// Info & Download Endpoint
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     try {
         const movieUrl = req.query.url;
@@ -201,21 +201,17 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     const finalHtml = finalRes.data;
                     const $final = cheerio.load(finalHtml);
 
-                    // Extract all <a> links
+                    // Extract all <a> links from final page
                     $final('a').each((i, el) => {
                         let link = $final(el).attr('href');
                         if (!link) link = '';
                         if (link.startsWith('//')) link = 'https:' + link;
 
-                        // Valid links filtering (Exclude telegram.org share/login links, include telegram bot links and direct servers)
                         if (link && !link.includes('cinesubz.net') && !link.includes('CineSubzAdmin') && !link.includes('javascript') && !link.includes('telegram.org')) {
                             
                             let isBotLink = link.includes('t.me/') || link.includes('telegram.me/');
-                            if (isBotLink && !link.includes('bot') && !link.includes('start=')) {
-                                return; // Skip non-bot telegram links
-                            }
-
                             let type = "Direct Server";
+
                             if (link.includes('pixeldrain')) {
                                 type = "PixelDrain";
                             } else if (isBotLink) {
@@ -236,18 +232,15 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         }
                     });
 
-                    // Regex scan on final page script/HTML
+                    // Regex scan on final page script/HTML to catch hidden/embedded links
                     const linkRegex = /https?:\/\/[^\s"'<>]+\b(?:pixeldrain|mega|drive|download|file|stream|get|space|kdrive|telegram\.me|t\.me)[^\s"'<>]*/gi;
                     const regexMatches = finalHtml.match(linkRegex);
                     if (regexMatches) {
                         regexMatches.forEach(l => {
                             if (!l.includes('cinesubz.net') && !l.includes('CineSubzAdmin') && !l.includes('telegram.org')) {
                                 let isBotLink = l.includes('t.me/') || l.includes('telegram.me/');
-                                if (isBotLink && !l.includes('bot') && !l.includes('start=')) {
-                                    return;
-                                }
-
                                 let type = "Direct Server";
+
                                 if (l.includes('pixeldrain')) {
                                     type = "PixelDrain";
                                 } else if (isBotLink) {
