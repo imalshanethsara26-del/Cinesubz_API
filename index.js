@@ -12,7 +12,8 @@ if (!PORT) {
 app.use(cors());
 
 const HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Referer': 'https://cinesubz.lk/'
 };
 
 // Root Status Route
@@ -27,7 +28,7 @@ app.get('/', (req, res) => {
     });
 });
 
-// Search Endpoint
+// Search Endpoint (cinesubz.lk ඩොමේන් එකට සකස් කරන ලදී)
 app.get('/api/v1/cinesubz/search', async (req, res) => {
     try {
         const query = req.query.q;
@@ -35,7 +36,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
             return res.status(400).json({ status: false, message: "Search term required" });
         }
 
-        const searchUrl = "https://cinesubz.net/?s=" + encodeURIComponent(query);
+        const searchUrl = "https://cinesubz.lk/?s=" + encodeURIComponent(query);
         const response = await axios.get(searchUrl, { headers: HEADERS, timeout: 15000 });
         const $ = cheerio.load(response.data);
         const results = [];
@@ -56,7 +57,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
             if (!img) img = parent.find('img').attr('data-src');
             if (!img) img = '';
 
-            if (href.includes('cinesubz.net') && (href.includes('/movies/') || href.includes('/tvshows/')) && title.length > 2) {
+            if (href.includes('cinesubz.lk') && (href.includes('/movies/') || href.includes('/tvshows/')) && title.length > 2) {
                 title = title.replace(/\t|\n/g, '').trim();
                 if (!results.some(r => r.link === href)) {
                     results.push({ title, image: img, link: href });
@@ -64,13 +65,13 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
             }
         });
 
-        res.json({ status: true, creator: "IMALSHA API", site: "cinesubz", results_count: results.length, data: results });
+        res.json({ status: true, creator: "@Imalsha", site: "cinesubz", results_count: results.length, data: results });
     } catch (err) {
         res.status(500).json({ status: false, error: err.message });
     }
 });
 
-// Info & Download Endpoint (චමිදුගේ API එකේ වගේම Multi-step Recursive Link Resolver තාක්ෂණය)
+// Info & Download Endpoint (cinesubz.lk මූවි පේජ් සහ zt-links හරහා සැබෑ ඩවුන්ලෝඩ් ලින්ක්ස් ලබා ගැනීම)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     try {
         const movieUrl = req.query.url;
@@ -143,15 +144,18 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         });
 
-        // Downloads Extraction (zt-links එකතු කරගැනීම)
+        // Downloads Extraction
         const downloads = [];
         const ztLinksToFetch = [];
 
+        // 1. Gather zt-links or direct download links on main movie page
         $('a').each((i, el) => {
             let href = $(el).attr('href');
             if (!href) href = '';
+            if (href.startsWith('//')) href = 'https:' + href;
 
             const text = $(el).text() + ' ' + $(el).parent().text();
+
             if (href.includes('/zt-links/')) {
                 const qMatch = text.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|HDRip)/i);
                 const sMatch = text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
@@ -160,10 +164,24 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     quality: qMatch ? qMatch[0].toUpperCase() : "WEB-DL",
                     size: sMatch ? sMatch[0] : "N/A"
                 });
+            } else if (href.includes('pixeldrain') || href.includes('supercloud') || href.includes('space') || href.includes('t.me')) {
+                if (!href.includes('cinesubz.lk') && !href.includes('CineSubzAdmin')) {
+                    let type = "Direct Server";
+                    if (href.includes('pixeldrain')) type = "PixelDrain";
+                    else if (href.includes('t.me') || href.includes('telegram')) type = "Telegram Bot";
+                    else if (href.includes('space')) type = "Direct High-Speed Server";
+
+                    downloads.push({
+                        quality: quality + " [" + type + "]",
+                        size: "N/A",
+                        language: "English",
+                        link: href
+                    });
+                }
             }
         });
 
-        // Recursive traversal through each zt-link to get real download links
+        // 2. Traverse zt-links if available
         for (const item of ztLinksToFetch) {
             try {
                 const ztRes = await axios.get(item.url, { 
@@ -178,7 +196,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     let h = $zt(el).attr('href');
                     if (!h) h = '';
                     if (h.startsWith('//')) h = 'https:' + h;
-                    if (h && !h.includes('cinesubz.net') && (h.includes('space') || h.includes('redirect') || h.startsWith('http'))) {
+                    if (h && !h.includes('cinesubz.lk') && (h.includes('space') || h.includes('redirect') || h.startsWith('http'))) {
                         redirectUrl = h;
                     }
                 });
@@ -187,7 +205,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     const urlRegex = /https?:\/\/[^\s"'<>]+\b(?:space|redirect|dl|download|player|go)[^\s"'<>]*/gi;
                     const matches = ztHtml.match(urlRegex);
                     if (matches) {
-                        const valid = matches.filter(m => !m.includes('cinesubz.net'));
+                        const valid = matches.filter(m => !m.includes('cinesubz.lk'));
                         if (valid.length > 0) redirectUrl = valid[0];
                     }
                 }
@@ -200,26 +218,21 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     const finalHtml = finalRes.data;
                     const $final = cheerio.load(finalHtml);
 
-                    // 1. Check all <a> tags on final redirect page
                     $final('a').each((i, el) => {
                         let link = $final(el).attr('href');
                         if (!link) link = '';
                         if (link.startsWith('//')) link = 'https:' + link;
 
-                        if (link && !link.includes('cinesubz.net') && !link.includes('CineSubzAdmin') && !link.includes('javascript') && !link.includes('telegram.org')) {
+                        if (link && !link.includes('cinesubz.lk') && !link.includes('CineSubzAdmin') && !link.includes('javascript') && !link.includes('telegram.org')) {
                             let isBotLink = link.includes('t.me/') || link.includes('telegram.me/');
                             if (isBotLink && !link.includes('bot') && !link.includes('start=')) {
                                 return;
                             }
 
                             let type = "Direct Server";
-                            if (link.includes('pixeldrain')) {
-                                type = "PixelDrain";
-                            } else if (isBotLink) {
-                                type = "Telegram Bot";
-                            } else if (link.includes('space') || link.includes('kdrive')) {
-                                type = "Direct High-Speed Server";
-                            }
+                            if (link.includes('pixeldrain')) type = "PixelDrain";
+                            else if (isBotLink) type = "Telegram Bot";
+                            else if (link.includes('space') || link.includes('kdrive')) type = "Direct High-Speed Server";
 
                             let downloadName = item.quality + " [" + type + "]";
                             if (!downloads.some(d => d.link === link)) {
@@ -233,25 +246,19 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         }
                     });
 
-                    // 2. Scan script/HTML via Regex on final page
+                    // Regex scan on final page
                     const linkRegex = /https?:\/\/[^\s"'<>]+\b(?:pixeldrain|mega|drive|download|file|stream|get|space|kdrive|telegram\.me|t\.me)[^\s"'<>]*/gi;
                     const regexMatches = finalHtml.match(linkRegex);
                     if (regexMatches) {
                         regexMatches.forEach(l => {
-                            if (!l.includes('cinesubz.net') && !l.includes('CineSubzAdmin') && !l.includes('telegram.org')) {
+                            if (!l.includes('cinesubz.lk') && !l.includes('CineSubzAdmin') && !l.includes('telegram.org')) {
                                 let isBotLink = l.includes('t.me/') || l.includes('telegram.me/');
-                                if (isBotLink && !l.includes('bot') && !l.includes('start=')) {
-                                    return;
-                                }
+                                if (isBotLink && !l.includes('bot') && !l.includes('start=')) return;
 
                                 let type = "Direct Server";
-                                if (l.includes('pixeldrain')) {
-                                    type = "PixelDrain";
-                                } else if (isBotLink) {
-                                    type = "Telegram Bot";
-                                } else if (l.includes('space') || l.includes('kdrive')) {
-                                    type = "Direct High-Speed Server";
-                                }
+                                if (l.includes('pixeldrain')) type = "PixelDrain";
+                                else if (isBotLink) type = "Telegram Bot";
+                                else if (l.includes('space') || l.includes('kdrive')) type = "Direct High-Speed Server";
 
                                 let downloadName = item.quality + " [" + type + "]";
                                 if (!downloads.some(d => d.link === l)) {
@@ -268,6 +275,31 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 }
             } catch (err) {
                 // Ignore nested error
+            }
+        }
+
+        // 3. Fallback Regex scan on main movie page HTML
+        if (downloads.length === 0) {
+            const mainRegex = /https?:\/\/[^\s"'<>]+\b(?:pixeldrain|supercloud|space|kdrive|t\.me|telegram\.me)[^\s"'<>]*/gi;
+            const mainMatches = html.match(mainRegex);
+            if (mainMatches) {
+                mainMatches.forEach(l => {
+                    if (!l.includes('cinesubz.lk') && !l.includes('CineSubzAdmin') && !l.includes('telegram.org')) {
+                        let type = "Direct Server";
+                        if (l.includes('pixeldrain')) type = "PixelDrain";
+                        else if (l.includes('t.me')) type = "Telegram Bot";
+                        else if (l.includes('space')) type = "Direct High-Speed Server";
+
+                        if (!downloads.some(d => d.link === l)) {
+                            downloads.push({
+                                quality: quality + " [" + type + "]",
+                                size: "N/A",
+                                language: "English",
+                                link: l
+                            });
+                        }
+                    }
+                });
             }
         }
 
