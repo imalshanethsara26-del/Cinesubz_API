@@ -123,7 +123,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Direct High-Speed Server & PixelDrain Extractor)
+// 3. Info & Download Endpoint (Deep Navigation inside CS Player Pages)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -135,7 +135,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     try {
         browser = await getBrowser();
         const page = await browser.newPage();
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+        await page.setUserAgent(HEADERS['User-Agent']);
         await page.setViewport({ width: 1280, height: 800 });
 
         await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
@@ -190,21 +190,10 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             let subPage;
             try {
                 subPage = await browser.newPage();
-                await subPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+                await subPage.setUserAgent(HEADERS['User-Agent']);
                 
-                let finalDestinationUrl = item.url;
-                subPage.on('response', response => {
-                    const status = response.status();
-                    if ((status >= 300 && status <= 399) && response.headers()['location']) {
-                        finalDestinationUrl = response.headers()['location'];
-                    }
-                });
-
                 await subPage.goto(item.url, { waitUntil: 'networkidle2', timeout: 25000 }).catch(() => {});
                 await new Promise(r => setTimeout(r, 2000));
-
-                const pageBodyText = await subPage.evaluate(() => document.body ? document.body.innerText : '');
-                const urlMatches = pageBodyText.match(/https?:\/\/[^\s"'<>]+/g) || [];
 
                 const subLinks = await subPage.evaluate(() => {
                     const list = [];
@@ -218,10 +207,6 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     return list;
                 });
 
-                urlMatches.forEach(u => subLinks.push({ href: u, text: '' }));
-                subLinks.push({ href: finalDestinationUrl, text: '' });
-                subLinks.push({ href: item.url, text: '' }); // Include the intermediate URL itself as it contains the stream/file link
-
                 const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|WEBRip|HDRip)/i);
                 const qualityName = qMatch ? qMatch[0].toUpperCase() : "WEB-DL";
                 const sMatch = item.text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
@@ -234,16 +219,62 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
                     if (tLower.includes('facebook.com') || tLower.includes('youtube.com')) continue;
 
-                    if (tLower.includes('pixeldrain') || tLower.endsWith('.mp4') || tLower.endsWith('.mkv') || tLower.includes('space') || tLower.includes('kdrive') || tLower.includes('csplayer') || (tLower.includes('t.me/') && tLower.includes('bot') && tLower.includes('start='))) {
-                        
-                        let type = "Direct High-Speed Server";
+                    // If it's a CS Player / Space / Kdrive page, go INSIDE that page to extract the real internal links!
+                    if (tLower.includes('space') || tLower.includes('kdrive') || tLower.includes('csplayer') || tLower.includes('redirect')) {
+                        console.log(`   🚀 Entering CS Player Page: ${targetUrl}`);
+                        let playerPage;
+                        try {
+                            playerPage = await browser.newPage();
+                            await playerPage.setUserAgent(HEADERS['User-Agent']);
+                            await playerPage.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
+                            await new Promise(r => setTimeout(r, 2000));
+
+                            // Extract all links INSIDE the CS Player page
+                            const innerFileLinks = await playerPage.evaluate(() => {
+                                const innerList = [];
+                                document.querySelectorAll('a').forEach(el => {
+                                    const h = el.href || '';
+                                    const t = (el.innerText || '').trim();
+                                    if (h && !h.includes('javascript:') && !h.includes('#')) {
+                                        innerList.push({ href: h, text: t });
+                                    }
+                                });
+                                return innerList;
+                            });
+
+                            await playerPage.close();
+
+                            innerFileLinks.forEach(inner => {
+                                const innerUrl = inner.href;
+                                const iLower = innerUrl.toLowerCase();
+
+                                if (iLower.includes('cinesubz.') || iLower.includes('facebook.com') || iLower.includes('youtube.com')) return;
+
+                                let type = "Direct Server";
+                                if (iLower.includes('pixeldrain')) type = "PixelDrain";
+                                else if (iLower.includes('t.me/') && iLower.includes('bot')) type = "Telegram Bot";
+                                else if (iLower.includes('space') || iLower.includes('kdrive') || iLower.endsWith('.mp4') || iLower.endsWith('.mkv')) type = "Direct High-Speed Server";
+
+                                const qualityLabel = qualityName + " [" + type + "]";
+                                if (!downloads.some(d => d.link === innerUrl)) {
+                                    downloads.push({ quality: qualityLabel, size, language: "English", link: innerUrl });
+                                    console.log(`     ✅ Inner Link Extracted from CS Page: [${qualityLabel}] -> ${innerUrl}`);
+                                }
+                            });
+
+                        } catch (pe) {
+                            if (playerPage) await playerPage.close();
+                        }
+                    } 
+                    else if (tLower.includes('pixeldrain') || tLower.endsWith('.mp4') || tLower.endsWith('.mkv') || (tLower.includes('t.me/') && tLower.includes('bot'))) {
+                        let type = "Direct Server";
                         if (tLower.includes('pixeldrain')) type = "PixelDrain";
                         else if (tLower.includes('t.me/')) type = "Telegram Bot";
 
                         const qualityLabel = qualityName + " [" + type + "]";
                         if (!downloads.some(d => d.link === targetUrl)) {
                             downloads.push({ quality: qualityLabel, size, language: "English", link: targetUrl });
-                            console.log(`   ✅ Valid Download Link Captured: [${qualityLabel}] -> ${targetUrl}`);
+                            console.log(`   ✅ Direct Link Captured: [${qualityLabel}] -> ${targetUrl}`);
                         }
                     }
                 }
