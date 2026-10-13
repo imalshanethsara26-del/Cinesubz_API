@@ -123,7 +123,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Handles Timers, Intermediate Redirects, and CS Player Button Extraction)
+// 3. Info & Download Endpoint (Extracts actual download links inside CS Player pages, avoiding wrapper URLs)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -194,22 +194,22 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 
                 await subPage.goto(item.url, { waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
                 
-                // Wait for any timer or redirect button (Go to Download Page) to appear and click it if exists
+                // Click "Go to Download Page" if timer page exists
                 try {
-                    await subPage.waitForSelector('a, button', { timeout: 4000 });
-                    // Click buttons like "Go to Download Page" if present
+                    await new Promise(r => setTimeout(r, 2000));
                     await subPage.evaluate(() => {
                         document.querySelectorAll('a, button').forEach(el => {
-                            if (el.innerText.toLowerCase().includes('download') || el.innerText.toLowerCase().includes('go to')) {
+                            const txt = el.innerText.toLowerCase();
+                            if (txt.includes('download page') || txt.includes('go to') || txt.includes('click here')) {
                                 el.click();
                             }
                         });
                     });
-                    await new Promise(r => setTimeout(r, 4000)); // Wait for csplayer to load fully
+                    await new Promise(r => setTimeout(r, 4000)); // Wait for CS Player page to load fully
                 } catch (e) {}
 
-                // Extract all links inside the final csplayer / download page after waiting
-                const csPlayerLinks = await subPage.evaluate(() => {
+                // Extract all anchor links INSIDE the final CS Player download page
+                const csPlayerInternalLinks = await subPage.evaluate(() => {
                     const list = [];
                     document.querySelectorAll('a').forEach(a => {
                         const h = a.href || '';
@@ -226,14 +226,17 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 const sMatch = item.text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
                 const size = sMatch ? sMatch[0] : "N/A";
 
-                csPlayerLinks.forEach(linkObj => {
+                csPlayerInternalLinks.forEach(linkObj => {
                     let targetUrl = linkObj.href;
                     let linkText = linkObj.text.toLowerCase();
                     const tLower = targetUrl.toLowerCase();
 
+                    // Exclude wrapper URLs, ads, social media, cinesubz main site
+                    if (tLower.includes('csplayer2.space') && !tLower.includes('server') && !tLower.includes('download')) return;
                     if (tLower.includes('facebook.com') || tLower.includes('youtube.com') || tLower.includes('cinesubz.net/movies')) return;
 
-                    if (tLower.includes('space') || tLower.includes('kdrive') || tLower.includes('csplayer') || tLower.includes('pixeldrain') || tLower.endsWith('.mp4') || tLower.endsWith('.mkv') || (tLower.includes('t.me/') && tLower.includes('bot'))) {
+                    // Capture only real download destinations (PixelDrain, Telegram Bot, Direct File servers)
+                    if (tLower.includes('pixeldrain') || tLower.includes('t.me/') || tLower.endsWith('.mp4') || tLower.endsWith('.mkv') || tLower.includes('download') || linkText.includes('download') || linkText.includes('telegram')) {
                         
                         let type = "Direct High-Speed Server";
                         if (tLower.includes('pixeldrain') || linkText.includes('pixeldrain')) type = "PixelDrain";
@@ -242,7 +245,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         const qualityLabel = qualityName + " [" + type + "]";
                         if (!downloads.some(d => d.link === targetUrl)) {
                             downloads.push({ quality: qualityLabel, size, language: "English", link: targetUrl });
-                            console.log(`   ✅ Download Link Captured from CS Page: [${qualityLabel}] -> ${targetUrl}`);
+                            console.log(`   ✅ Actual Download Link Captured: [${qualityLabel}] -> ${targetUrl}`);
                         }
                     }
                 });
