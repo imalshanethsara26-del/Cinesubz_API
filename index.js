@@ -39,7 +39,7 @@ app.get('/', (req, res) => {
     });
 });
 
-// Fixed Search Endpoint
+// Fixed Search Endpoint (Safe Logic without operator issues)
 app.get('/api/v1/cinesubz/search', async (req, res) => {
     try {
         const query = req.query.q;
@@ -51,7 +51,8 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
         const results = [];
 
         $('a').each((i, el) => {
-            let href = $(el).attr('href') || '';
+            let href = $(el).attr('href');
+            if (!href) href = '';
             
             if (href === 'https://cinesubz.lk/movies/' || href === 'https://cinesubz.lk/tvshows/' || href === 'https://cinesubz.lk/') {
                 return;
@@ -59,13 +60,26 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
 
             if (href.includes('cinesubz.lk') && (href.includes('/movies/') || href.includes('/tvshows/'))) {
                 let title = $(el).find('h2, h3, .title').text().trim();
-                if (!title) title = $(el).attr('title') || '';
-                if (!title) title = $(el).text().trim();
+                if (!title) {
+                    title = $(el).attr('title');
+                }
+                if (!title) {
+                    title = $(el).text().trim();
+                }
 
-                let img = $(el).find('img').attr('src') \vert{}\vert{}$(el).find('img').attr('data-src') || '';
+                let img = $(el).find('img').attr('src');
+                if (!img) {
+                    img = $(el).find('img').attr('data-src');
+                }
                 if (!img) {
                     const parent = $(el).closest('article, .post, .item, div');
-                    img = parent.find('img').attr('src') || parent.find('img').attr('data-src') || '';
+                    img = parent.find('img').attr('src');
+                    if (!img) {
+                        img = parent.find('img').attr('data-src');
+                    }
+                }
+                if (!img) {
+                    img = '';
                 }
 
                 if (title && title.length > 2 && !title.includes('All Movies') && !title.includes('TV Shows')) {
