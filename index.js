@@ -40,7 +40,7 @@ app.get('/', (req, res) => {
     });
 });
 
-// 1. Latest Movies Endpoint (හෝම් පේජ් එකේ අලුත්ම මූවීස් පෙන්වීම සඳහා)
+// 1. Latest Movies Endpoint (Safe from syntax errors)
 app.get('/api/v1/cinesubz/latest', async (req, res) => {
     try {
         const pageNum = req.query.page || 1;
@@ -58,11 +58,17 @@ app.get('/api/v1/cinesubz/latest', async (req, res) => {
             if (!title) title = $(el).attr('title') || '';
             if (!title) title = $(el).text().trim();
 
-            let img = $(el).find('img').attr('src') \vert{}\vert{}$(el).find('img').attr('data-src') || '';
-            if (!img) img = parent.find('img').attr('src') || parent.find('img').attr('data-src') || '';
+            let img = $(el).find('img').attr('src');
+            if (!img) img = $(el).find('img').attr('data-src');
+            if (!img) img = parent.find('img').attr('src');
+            if (!img) img = parent.find('img').attr('data-src');
+            if (!img) img = '';
 
-            let quality = parent.find('.quality, .badge').text().trim() || 'WEB-DL';
-            let rating = parent.find('.imdb-rate, .rating').text().trim() || 'N/A';
+            let quality = parent.find('.quality, .badge').text().trim();
+            if (!quality) quality = 'WEB-DL';
+
+            let rating = parent.find('.imdb-rate, .rating').text().trim();
+            if (!rating) rating = 'N/A';
 
             if (href.includes('cinesubz.net') && (href.includes('/movies/') || href.includes('/tvshows/')) && title.length > 2) {
                 title = title.replace(/\t|\n/g, '').trim();
@@ -97,8 +103,11 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
             if (!title) title = $(el).attr('title') || '';
             if (!title) title = $(el).text().trim();
 
-            let img = $(el).find('img').attr('src') \vert{}\vert{}$(el).find('img').attr('data-src') || '';
-            if (!img) img = parent.find('img').attr('src') || parent.find('img').attr('data-src') || '';
+            let img = $(el).find('img').attr('src');
+            if (!img) img = $(el).find('img').attr('data-src');
+            if (!img) img = parent.find('img').attr('src');
+            if (!img) img = parent.find('img').attr('data-src');
+            if (!img) img = '';
 
             if (href.includes('cinesubz.net') && (href.includes('/movies/') || href.includes('/tvshows/')) && title.length > 2) {
                 title = title.replace(/\t|\n/g, '').trim();
@@ -114,7 +123,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Puppeteer High-Speed Logic)
+// 3. Info & Download Endpoint
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
