@@ -123,10 +123,13 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Extracting actual PixelDrain, Direct, and Telegram links from zt-links)
+// 3. Info & Download Endpoint (Full Extraction + Terminal Debug Logs)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
+
+    console.log(`\n==============================================`);
+    console.log(`🔍 [API LOG] Processing InfoDL Request for: ${movieUrl}`);
 
     let browser;
     try {
@@ -135,7 +138,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
         await page.setViewport({ width: 1280, height: 800 });
 
-        await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
 
         const pageData = await page.evaluate(() => {
             const title = document.querySelector('meta[property="og:title"]')?.content || document.querySelector('h1')?.innerText || 'Unknown';
@@ -152,13 +155,13 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 }
             });
 
-            // Collect all redirect / zt-links from movie post
+            // Catch all possible redirect/intermediate links on main page
             const ztLinks = [];
             document.querySelectorAll('a').forEach(a => {
                 const href = a.href || '';
                 const txt = (a.innerText || '') + ' ' + (a.parentElement ? a.parentElement.innerText : '');
                 
-                if (href && (href.includes('zt-links') || href.includes('download') || href.includes('link') || href.includes('space'))) {
+                if (href && (href.includes('zt-links') || href.includes('download') || href.includes('link') || href.includes('space') || href.includes('redirect'))) {
                     if (!href.includes('cinesubz.net/movies/') && !href.includes('cinesubz.lk/movies/') && !href.includes('facebook.com') && !href.includes('telegram.org')) {
                         if (!ztLinks.some(d => d.url === href)) {
                             ztLinks.push({ url: href, text: txt });
@@ -170,42 +173,57 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             return { title, image, quality, rating, director, story: story || 'No description available', ztLinks };
         });
 
+        console.log(`🎬 Title: ${pageData.title}`);
+        console.log(`🔗 Found ${pageData.ztLinks.length} potential redirect page(s).`);
+
         let year = "2026";
         const yearMatch = pageData.title.match(/\((\d{4})\)/);
         if (yearMatch) year = yearMatch[1];
 
         const downloads = [];
 
-        // Deep dive into each zt-link page to grab PixelDrain, Direct Servers & Telegram Bots
+        // Scrape deep inside every single intermediate page (csplayer/space/zt-links)
         for (let i = 0; i < pageData.ztLinks.length; i++) {
             const item = pageData.ztLinks[i];
+            console.log(`\n⏳ Navigating to Page ${i + 1}/${pageData.ztLinks.length}: ${item.url}`);
+            
             let subPage;
             try {
                 subPage = await browser.newPage();
                 await subPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
                 
-                await subPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+                // Wait until network is idle to ensure dynamic links/buttons load completely
+                await subPage.goto(item.url, { waitUntil: 'networkidle2', timeout: 25000 }).catch(() => {});
 
-                const extractedData = await subPage.evaluate(() => {
-                    const linksList = [];
+                // Small delay for JS render if needed
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Extract EVERY link inside this target page without strict filters
+                const allExtractedLinks = await subPage.evaluate(() => {
+                    const found = [];
                     document.querySelectorAll('a').forEach(a => {
                         const h = a.href || '';
-                        const t = (a.innerText || '') + ' ' + (a.parentElement ? a.parentElement.innerText : '');
-                        if (h && !h.includes('cinesubz')) {
-                            linksList.push({ href: h, text: t });
+                        const t = (a.innerText || '').trim();
+                        if (h && !h.includes('javascript:') && !h.includes('#')) {
+                            found.push({ href: h, text: t });
                         }
                     });
-                    return linksList;
+                    return found;
                 });
+
+                console.log(`   📌 Scraped ${allExtractedLinks.length} link(s) inside this page.`);
 
                 const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|WEBRip|HDRip)/i);
                 const qualityName = qMatch ? qMatch[0].toUpperCase() : "WEB-DL";
                 const sMatch = item.text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
                 const size = sMatch ? sMatch[0] : "N/A";
 
-                extractedData.forEach(entry => {
+                allExtractedLinks.forEach(entry => {
                     const link = entry.href;
-                    if (link.includes('telegram.org') || link.includes('facebook.com')) return;
+
+                    // Filter out social and main site links
+                    if (link.includes('cinesubz.net') || link.includes('cinesubz.lk') || link.includes('facebook.com') || link.includes('whatsapp.com')) return;
+                    if (link.includes('telegram.org') && !link.includes('t.me') && !link.includes('telegram.me')) return;
 
                     let isBotLink = link.includes('t.me/') || link.includes('telegram.me/');
                     if (isBotLink && !link.includes('bot') && !link.includes('start=')) return;
@@ -218,16 +236,20 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     const qualityLabel = qualityName + " [" + type + "]";
                     if (!downloads.some(d => d.link === link)) {
                         downloads.push({ quality: qualityLabel, size, language: "English", link });
+                        console.log(`   ✅ Valid Link Extracted: [${qualityLabel}] -> ${link}`);
                     }
                 });
 
                 await subPage.close();
             } catch (subErr) {
+                console.error(`   ❌ Failed to scrape sub-page: ${subErr.message}`);
                 if (subPage) await subPage.close();
             }
         }
 
         await browser.close();
+        console.log(`\n🎉 Total Final Download Links Extracted: ${downloads.length}`);
+        console.log(`==============================================\n`);
 
         res.json({
             status: true,
@@ -258,6 +280,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         });
 
     } catch (err) {
+        console.error(`❌ Critical InfoDL Error: ${err.message}`);
         if (browser) await browser.close();
         res.status(500).json({ status: false, error: err.message });
     }
