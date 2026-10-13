@@ -39,7 +39,7 @@ app.get('/', (req, res) => {
     });
 });
 
-// Fixed Search Endpoint (Axios & Cheerio හරහා නිවැරදිව සර්ච් කිරීම)
+// Fixed Search Endpoint
 app.get('/api/v1/cinesubz/search', async (req, res) => {
     try {
         const query = req.query.q;
@@ -50,11 +50,9 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
         const $ = cheerio.load(response.data);
         const results = [];
 
-        // සර්ච් රිසල්ට්ස් වල තියෙන මූවී කාඩ් හෝ ආටිකල්ස් හරහා ස්කෑන් කිරීම
         $('a').each((i, el) => {
             let href = $(el).attr('href') || '';
             
-            // කැටගරි ලින්ක්ස් (ഉදා: /movies/, /tvshows/) සහ හෝම් පේජ් ලින්ක් ඉවත් කිරීම
             if (href === 'https://cinesubz.lk/movies/' || href === 'https://cinesubz.lk/tvshows/' || href === 'https://cinesubz.lk/') {
                 return;
             }
@@ -85,7 +83,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Info & Download Endpoint (ඔයාගේ වැඩ කරන සාර්ථක Puppeteer ලොජික් එකමයි)
+// Info & Download Endpoint
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -210,9 +208,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         });
 
-    }
-
-    catch (err) {
+    } catch (err) {
         if (browser) await browser.close();
         res.status(500).json({ status: false, error: err.message });
     }
