@@ -123,7 +123,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Universal & Bulletproof Link Grabber)
+// 3. Info & Download Endpoint (Strictly Filtered for Real Download Links Only)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -156,12 +156,20 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 }
             });
 
+            // Strictly grab zt-links or download/redirect links
             const targetLinks = [];
             document.querySelectorAll('a').forEach(a => {
                 const href = a.href || '';
                 const txt = (a.innerText || '') + ' ' + (a.parentElement ? a.parentElement.innerText : '');
-                
-                if (href && !href.includes('cinesubz.') && !href.includes('facebook.com') && !href.includes('whatsapp.com') && !href.includes('account') && !href.includes('wp-login')) {
+                const hLower = href.toLowerCase();
+
+                // Exclude images, youtube, social media, accounts
+                if (hLower.includes('.jpg') || hLower.includes('.png') || hLower.includes('.webp') || hLower.includes('youtube.com') || hLower.includes('facebook.com') || hLower.includes('whatsapp.com') || hLower.includes('account')) {
+                    return;
+                }
+
+                // Accept only download related links
+                if (href && (hLower.includes('zt-links') || hLower.includes('download') || hLower.includes('space') || hLower.includes('kdrive') || hLower.includes('csplayer') || hLower.includes('pixeldrain') || txt.toLowerCase().includes('download'))) {
                     if (!targetLinks.some(d => d.url === href)) {
                         targetLinks.push({ url: href, text: txt });
                     }
@@ -172,7 +180,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         });
 
         console.log(`🎬 Title: ${pageData.title}`);
-        console.log(`🔗 Found ${pageData.targetLinks.length} potential link(s) on the page.`);
+        console.log(`🔗 Found ${pageData.targetLinks.length} valid download redirect link(s).`);
 
         let year = "2026";
         const yearMatch = pageData.title.match(/\((\d{4})\)/);
@@ -197,7 +205,10 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     document.querySelectorAll('a').forEach(a => {
                         const h = a.href || '';
                         const t = (a.innerText || '').trim();
-                        if (h && !h.includes('cinesubz.')) {
+                        const hl = h.toLowerCase();
+                        
+                        // Exclude non-download links inside subpage
+                        if (hl && !hl.includes('cinesubz.') && !hl.includes('youtube.com') && !hl.includes('facebook.com') && !hl.includes('.jpg') && !hl.includes('.png')) {
                             list.push({ href: h, text: t });
                         }
                     });
@@ -215,22 +226,23 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
                 extractedLinks.forEach(entry => {
                     const link = entry.href;
+                    const lLower = link.toLowerCase();
 
-                    if (link.includes('cinesubz.') || link.includes('facebook.com') || link.includes('whatsapp.com')) return;
-                    if (link.includes('telegram.org') && !link.includes('t.me') && !link.includes('telegram.me')) return;
+                    if (lLower.includes('cinesubz.') || lLower.includes('facebook.com') || lLower.includes('whatsapp.com') || lLower.includes('youtube.com')) return;
+                    if (lLower.includes('telegram.org') && !lLower.includes('t.me') && !lLower.includes('telegram.me')) return;
 
-                    let isBotLink = link.includes('t.me/') || link.includes('telegram.me/');
-                    if (isBotLink && !link.includes('bot') && !link.includes('start=')) return;
+                    let isBotLink = lLower.includes('t.me/') || lLower.includes('telegram.me/');
+                    if (isBotLink && (!lLower.includes('bot') || !lLower.includes('start='))) return;
 
                     let type = "Direct Server";
-                    if (link.includes('pixeldrain')) type = "PixelDrain";
+                    if (lLower.includes('pixeldrain')) type = "PixelDrain";
                     else if (isBotLink) type = "Telegram Bot";
-                    else if (link.includes('space') || link.includes('kdrive') || link.includes('csplayer') || link.endsWith('.mp4') || link.endsWith('.mkv')) type = "Direct High-Speed Server";
+                    else if (lLower.includes('space') || lLower.includes('kdrive') || lLower.includes('csplayer') || lLower.endsWith('.mp4') || lLower.endsWith('.mkv')) type = "Direct High-Speed Server";
 
                     const qualityLabel = qualityName + " [" + type + "]";
                     if (!downloads.some(d => d.link === link)) {
                         downloads.push({ quality: qualityLabel, size, language: "English", link });
-                        console.log(`   ✅ Extracted Link: [${qualityLabel}] -> ${link}`);
+                        console.log(`   ✅ Clean Download Link Extracted: [${qualityLabel}] -> ${link}`);
                     }
                 });
 
