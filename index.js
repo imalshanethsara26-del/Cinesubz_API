@@ -123,7 +123,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Strictly Extracts Real Links Inside CS Player, excluding wrapper URLs)
+// 3. Info & Download Endpoint (Enters CS Player page and extracts inner true download/telegram links)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -194,7 +194,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 
                 await subPage.goto(item.url, { waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
                 
-                // Click "Go to Download Page" if timer page exists
+                // Handle timer / redirect pages
                 try {
                     await new Promise(r => setTimeout(r, 2000));
                     await subPage.evaluate(() => {
@@ -205,10 +205,10 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                             }
                         });
                     });
-                    await new Promise(r => setTimeout(r, 4000)); // Wait for CS Player page to load fully
+                    await new Promise(r => setTimeout(r, 4000)); // Wait for CS Player page to fully load buttons
                 } catch (e) {}
 
-                // Extract all anchor links INSIDE the final CS Player download page
+                // Now we are on the CS Player page. Let's extract all anchor links inside this page!
                 const csPlayerInternalLinks = await subPage.evaluate(() => {
                     const list = [];
                     document.querySelectorAll('a').forEach(a => {
@@ -231,22 +231,20 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     let linkText = linkObj.text.toLowerCase();
                     const tLower = targetUrl.toLowerCase();
 
-                    // EXCLUDE csplayer wrapper URLs so they never get added as final links
-                    if (tLower.includes('csplayer2.space') || tLower.includes('space') || tLower.includes('kdrive')) return;
+                    // Exclude social media and cinesubz info pages
                     if (tLower.includes('facebook.com') || tLower.includes('youtube.com') || tLower.includes('cinesubz.net/movies')) return;
 
-                    // Capture ONLY real download destinations (PixelDrain, Telegram Bot, Direct File servers)
+                    // If the link inside CS player is PixelDrain, Telegram Bot, or Direct download file link
                     if (tLower.includes('pixeldrain') || tLower.includes('t.me/') || tLower.endsWith('.mp4') || tLower.endsWith('.mkv') || tLower.includes('download') || linkText.includes('download') || linkText.includes('telegram')) {
                         
-                        let type = "Direct Server";
+                        let type = "Direct High-Speed Server";
                         if (tLower.includes('pixeldrain') || linkText.includes('pixeldrain')) type = "PixelDrain";
                         else if (tLower.includes('t.me/') || linkText.includes('telegram')) type = "Telegram Bot";
-                        else type = "Direct High-Speed Server";
 
                         const qualityLabel = qualityName + " [" + type + "]";
                         if (!downloads.some(d => d.link === targetUrl)) {
                             downloads.push({ quality: qualityLabel, size, language: "English", link: targetUrl });
-                            console.log(`   ✅ Real Download Link Captured: [${qualityLabel}] -> ${targetUrl}`);
+                            console.log(`   ✅ True Inner Download Link Captured: [${qualityLabel}] -> ${targetUrl}`);
                         }
                     }
                 });
