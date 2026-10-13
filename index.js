@@ -123,7 +123,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Enhanced Robust Scraper for both old and new movies)
+// 3. Info & Download Endpoint (Combined Robust Scraper for both zt-links and old movie download buttons)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -152,14 +152,26 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 }
             });
 
-            // Robust selector: Grab all links inside entry content, spoilers, or buttons to support old movies (like Iron Man 2008)
+            // Combined Link Collector: Catches zt-links, download keywords, and button links for all movies (old & new)
             const dlLinks = [];
-            document.querySelectorAll('.entry-content a, .su-spoiler-content a, article a, a.btn, .button a').forEach(a => {
+            document.querySelectorAll('a').forEach(a => {
                 const href = a.href || '';
                 const txt = (a.innerText || '') + ' ' + (a.parentElement ? a.parentElement.innerText : '');
                 
-                if (href && !href.includes('cinesubz.net') && !href.includes('cinesubz.lk') && !href.includes('facebook.com') && !href.includes('whatsapp.com') && !href.includes('telegram.org') && !href.includes('wp-content/uploads')) {
-                    dlLinks.push({ url: href, text: txt });
+                const isTarget = href.includes('zt-links') || 
+                                 href.includes('download') || 
+                                 href.includes('drive') || 
+                                 a.classList.contains('btn') || 
+                                 txt.toLowerCase().includes('download') ||
+                                 txt.toLowerCase().includes('1080p') ||
+                                 txt.toLowerCase().includes('720p');
+
+                if (href && isTarget) {
+                    if (!href.includes('cinesubz.net/movies/') && !href.includes('cinesubz.lk/movies/') && !href.includes('facebook.com') && !href.includes('telegram.org') && !href.includes('whatsapp.com')) {
+                        if (!dlLinks.some(d => d.url === href)) {
+                            dlLinks.push({ url: href, text: txt });
+                        }
+                    }
                 }
             });
 
