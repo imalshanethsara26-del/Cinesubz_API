@@ -31,7 +31,7 @@ async function getBrowser() {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ COMPLETE API is Live 🚀",
+        message: "IMALSHA CINESUBZ ROBUST API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -123,13 +123,13 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Fully Rendered Puppeteer DOM Extraction)
+// 3. Info & Download Endpoint (Robust Dynamic Wait Extraction)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔍 [COMPLETE API] Processing Movie URL: ${movieUrl}`);
+    console.log(`🔍 [ROBUST API] Processing Movie URL: ${movieUrl}`);
 
     let browser;
     try {
@@ -205,7 +205,15 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         });
                     });
                     await subPage.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
-                    await new Promise(r => setTimeout(r, 6000)); // Wait for JS to fully update hrefs
+
+                    // 🛠️ SMART WAIT: Wait until "Direct Download" or download buttons appear on csplayer page (up to 15 seconds)
+                    await subPage.waitForFunction(() => {
+                        const bodyText = document.body.innerText;
+                        return bodyText.includes('Direct Download') || bodyText.includes('Telegram Download') || bodyText.includes('File Size');
+                    }, { timeout: 15000 }).catch(() => {});
+
+                    // Extra buffer to ensure all DOM href bindings are fully executed by page JS
+                    await new Promise(r => setTimeout(r, 2000));
                 } catch (e) {}
 
                 const finalRenderedLinks = await subPage.evaluate(() => {
@@ -292,4 +300,4 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Cinesubz Complete API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Cinesubz Robust API running on port ${PORT}`));
