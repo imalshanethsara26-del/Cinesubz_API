@@ -31,7 +31,7 @@ async function getBrowser() {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ RAW LINK API is Live 🚀",
+        message: "IMALSHA CINESUBZ FIXED API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -123,13 +123,13 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Using Puppeteer for timer and Axios for Raw Unmasked HTML Extraction)
+// 3. Info & Download Endpoint (Fixed Domain Mapping for Working Direct Links)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔍 [RAW API] Processing Movie URL: ${movieUrl}`);
+    console.log(`🔍 [FIXED API] Processing Movie URL: ${movieUrl}`);
 
     let browser;
     try {
@@ -192,17 +192,11 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 subPage = await browser.newPage();
                 await subPage.setUserAgent(HEADERS['User-Agent']);
                 
-                // Go to timer page
                 await subPage.goto(item.url, { waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
                 
-                // Click "Go to Download Page" and intercept the final CS Player URL
                 let finalCsPlayerUrl = '';
-                
-                // Listen for navigation or get current URL after click
                 try {
                     await new Promise(r => setTimeout(r, 2000));
-                    
-                    // Grab the destination URL of the download button before or during click
                     finalCsPlayerUrl = await subPage.evaluate(() => {
                         const btn = Array.from(document.querySelectorAll('a, button')).find(el => {
                             const txt = el.innerText.toLowerCase();
@@ -213,7 +207,6 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
                     if (!finalCsPlayerUrl) finalCsPlayerUrl = subPage.url();
 
-                    // Click it to trigger navigation
                     await subPage.evaluate(() => {
                         document.querySelectorAll('a, button').forEach(el => {
                             const txt = el.innerText.toLowerCase();
@@ -224,7 +217,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     });
 
                     await new Promise(r => setTimeout(r, 3000));
-                    finalCsPlayerUrl = subPage.url(); // Get the actual loaded csplayer URL
+                    finalCsPlayerUrl = subPage.url();
                 } catch (e) {
                     finalCsPlayerUrl = subPage.url();
                 }
@@ -233,34 +226,46 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
                 console.log(`   🎯 Captured CS Player URL: ${finalCsPlayerUrl}`);
 
-                // 🚀 MAGIC STEP: Fetch Raw HTML using Axios (Bypassing Client-side JS Obfuscation!)
                 if (finalCsPlayerUrl && finalCsPlayerUrl.includes('http')) {
+                    // Extract domain base (e.g., https://drive.csplayer2.space)
+                    const parsedUrl = new URL(finalCsPlayerUrl);
+                    const domainBase = `${parsedUrl.protocol}//${parsedUrl.host}`;
+
                     const rawResponse = await axios.get(finalCsPlayerUrl, { headers: HEADERS, timeout: 15000 });
-                    const $raw = cheerio.load(rawResponse.data);
+                    const htmlText = rawResponse.data;
 
                     const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|WEBRip|HDRip)/i);
                     const qualityName = qMatch ? qMatch[0].toUpperCase() : "WEB-DL";
                     const sMatch = item.text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
                     const size = sMatch ? sMatch[0] : "N/A";
 
-                    // Search all links in raw HTML
-                    $raw('a').each((_, el) => {
+                    // Regex to find mapped server paths inside the script (e.g. /server7/202608/...)
+                    const pathMatches = htmlText.match(/\/server\d+\/[^"'\s]+/g) || [];
+                    const uniquePaths = [...new Set(pathMatches)];
+
+                    uniquePaths.forEach(filePath => {
+                        let targetUrl = domainBase + filePath;
+                        
+                        let type = "Direct High-Speed Server";
+                        const qualityLabel = qualityName + " [" + type + "]";
+                        
+                        if (!downloads.some(d => d.link === targetUrl)) {
+                            downloads.push({ quality: qualityLabel, size, language: "English", link: targetUrl });
+                            console.log(`   ✅ Working Direct Server Link: [${qualityLabel}] -> ${targetUrl}`);
+                        }
+                    });
+
+                    // Also extract Telegram links if available
+                    const $raw = cheerio.load(htmlText);$raw('a').each((_, el) => {
                         let targetUrl = $raw(el).attr('href') || '';
                         let linkText = $raw(el).text().toLowerCase();
                         const tLower = targetUrl.toLowerCase();
 
-                        if (!targetUrl || tLower.includes('javascript:') || tLower.includes('#') || tLower.includes('facebook.com') || tLower.includes('youtube.com')) return;
-
-                        if (tLower.includes('pixeldrain') || tLower.includes('t.me/') || tLower.includes('space') || tLower.includes('kdrive') || tLower.endsWith('.mp4') || tLower.endsWith('.mkv') || tLower.includes('download') || linkText.includes('download') || linkText.includes('telegram')) {
-                            
-                            let type = "Direct High-Speed Server";
-                            if (tLower.includes('pixeldrain') || linkText.includes('pixeldrain')) type = "PixelDrain";
-                            else if (tLower.includes('t.me/') || linkText.includes('telegram')) type = "Telegram Bot";
-
-                            const qualityLabel = qualityName + " [" + type + "]";
+                        if (tLower.includes('t.me/')) {
+                            const qualityLabel = qualityName + " [Telegram Bot]";
                             if (!downloads.some(d => d.link === targetUrl)) {
                                 downloads.push({ quality: qualityLabel, size, language: "English", link: targetUrl });
-                                console.log(`   ✅ Raw Unmasked Link Captured: [${qualityLabel}] -> ${targetUrl}`);
+                                console.log(`   ✅ Telegram Link: [${qualityLabel}] -> ${targetUrl}`);
                             }
                         }
                     });
@@ -311,4 +316,4 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Cinesubz Raw API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Cinesubz Fixed API running on port ${PORT}`));
