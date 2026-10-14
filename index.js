@@ -31,7 +31,7 @@ async function getBrowser() {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ ROBUST API is Live 🚀",
+        message: "IMALSHA CINESUBZ DIRECT API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -123,13 +123,13 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Robust Dynamic Wait Extraction)
+// 3. Info & Download Endpoint (Direct PixelDrain/Telegram & Rendered CS Player extraction)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔍 [ROBUST API] Processing Movie URL: ${movieUrl}`);
+    console.log(`🔍 [DIRECT API] Processing Movie URL: ${movieUrl}`);
 
     let browser;
     try {
@@ -164,9 +164,14 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
                 if (hLower.includes('javascript:') || hLower.includes('#') || hLower.includes('.jpg') || hLower.includes('facebook.com') || hLower.includes('account')) return;
 
-                if (href && (hLower.includes('zt-links') || hLower.includes('download') || hLower.includes('space') || hLower.includes('kdrive') || hLower.includes('csplayer') || hLower.includes('pixeldrain') || hLower.includes('/api-') || txt.toLowerCase().includes('download'))) {
+                // Check if it's already a direct PixelDrain or Telegram link
+                if (hLower.includes('pixeldrain.com') || hLower.includes('t.me/')) {
                     if (!initialLinks.some(d => d.url === href)) {
-                        initialLinks.push({ url: href, text: txt });
+                        initialLinks.push({ url: href, text: txt, isDirect: true });
+                    }
+                } else if (href && (hLower.includes('zt-links') || hLower.includes('download') || hLower.includes('space') || hLower.includes('kdrive') || hLower.includes('csplayer') || hLower.includes('/api-') || txt.toLowerCase().includes('download'))) {
+                    if (!initialLinks.some(d => d.url === href)) {
+                        initialLinks.push({ url: href, text: txt, isDirect: false });
                     }
                 }
             });
@@ -175,7 +180,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         });
 
         console.log(`🎬 Title: ${pageData.title}`);
-        console.log(`🔗 Found ${pageData.initialLinks.length} initial redirect link(s).`);
+        console.log(`🔗 Found ${pageData.initialLinks.length} total links (Direct & Wrappers).`);
 
         let year = "2026";
         const yearMatch = pageData.title.match(/(\d{4})/);
@@ -185,8 +190,25 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         for (let i = 0; i < pageData.initialLinks.length; i++) {
             const item = pageData.initialLinks[i];
-            console.log(`\n⏳ Navigating Link ${i + 1}/${pageData.initialLinks.length}: ${item.url}`);
             
+            // 1. If it's ALREADY a direct PixelDrain or Telegram link, grab it instantly without navigating wrapper pages!
+            if (item.isDirect) {
+                let type = item.url.includes('pixeldrain') ? "PixelDrain" : "Telegram Bot";
+                const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|WEBRip|HDRip)/i);
+                const qualityName = qMatch ? qMatch[0].toUpperCase() : "WEB-DL";
+                const sMatch = item.text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
+                const size = sMatch ? sMatch[0] : "N/A";
+
+                const qualityLabel = qualityName + " [" + type + "]";
+                if (!downloads.some(d => d.link === item.url)) {
+                    downloads.push({ quality: qualityLabel, size, language: "English", link: item.url });
+                    console.log(`   🚀 Direct Link Captured: [${qualityLabel}] -> ${item.url}`);
+                }
+                continue;
+            }
+
+            // 2. Otherwise, navigate the wrapper page (zt-links / csplayer)
+            console.log(`\n⏳ Navigating Wrapper Link ${i + 1}: ${item.url}`);
             let subPage;
             try {
                 subPage = await browser.newPage();
@@ -205,14 +227,10 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         });
                     });
                     await subPage.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
-
-                    // 🛠️ SMART WAIT: Wait until "Direct Download" or download buttons appear on csplayer page (up to 15 seconds)
                     await subPage.waitForFunction(() => {
                         const bodyText = document.body.innerText;
                         return bodyText.includes('Direct Download') || bodyText.includes('Telegram Download') || bodyText.includes('File Size');
                     }, { timeout: 15000 }).catch(() => {});
-
-                    // Extra buffer to ensure all DOM href bindings are fully executed by page JS
                     await new Promise(r => setTimeout(r, 2000));
                 } catch (e) {}
 
@@ -249,7 +267,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         const qualityLabel = qualityName + " [" + type + "]";
                         if (!downloads.some(d => d.link === targetUrl)) {
                             downloads.push({ quality: qualityLabel, size, language: "English", link: targetUrl });
-                            console.log(`   ✅ Valid Final Link: [${qualityLabel}] -> ${targetUrl}`);
+                            console.log(`   ✅ Wrapper Resolved Link: [${qualityLabel}] -> ${targetUrl}`);
                         }
                     }
                 });
@@ -300,4 +318,4 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Cinesubz Robust API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Cinesubz Direct API running on port ${PORT}`));
