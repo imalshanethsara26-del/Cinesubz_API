@@ -31,7 +31,7 @@ async function getBrowser() {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ DIRECT API is Live 🚀",
+        message: "IMALSHA CINESUBZ DEBUGGING API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -123,13 +123,13 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Direct PixelDrain/Telegram & Rendered CS Player extraction)
+// 3. Info & Download Endpoint (Full Terminal Debugging for CS Player Page)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔍 [DIRECT API] Processing Movie URL: ${movieUrl}`);
+    console.log(`🔍 [DEBUG API] Processing Movie URL: ${movieUrl}`);
 
     let browser;
     try {
@@ -164,14 +164,9 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
                 if (hLower.includes('javascript:') || hLower.includes('#') || hLower.includes('.jpg') || hLower.includes('facebook.com') || hLower.includes('account')) return;
 
-                // Check if it's already a direct PixelDrain or Telegram link
-                if (hLower.includes('pixeldrain.com') || hLower.includes('t.me/')) {
+                if (href && (hLower.includes('zt-links') || hLower.includes('download') || hLower.includes('space') || hLower.includes('kdrive') || hLower.includes('csplayer') || hLower.includes('pixeldrain') || hLower.includes('/api-') || txt.toLowerCase().includes('download'))) {
                     if (!initialLinks.some(d => d.url === href)) {
-                        initialLinks.push({ url: href, text: txt, isDirect: true });
-                    }
-                } else if (href && (hLower.includes('zt-links') || hLower.includes('download') || hLower.includes('space') || hLower.includes('kdrive') || hLower.includes('csplayer') || hLower.includes('/api-') || txt.toLowerCase().includes('download'))) {
-                    if (!initialLinks.some(d => d.url === href)) {
-                        initialLinks.push({ url: href, text: txt, isDirect: false });
+                        initialLinks.push({ url: href, text: txt });
                     }
                 }
             });
@@ -180,7 +175,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         });
 
         console.log(`🎬 Title: ${pageData.title}`);
-        console.log(`🔗 Found ${pageData.initialLinks.length} total links (Direct & Wrappers).`);
+        console.log(`🔗 Found ${pageData.initialLinks.length} initial redirect link(s).`);
 
         let year = "2026";
         const yearMatch = pageData.title.match(/(\d{4})/);
@@ -190,25 +185,8 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         for (let i = 0; i < pageData.initialLinks.length; i++) {
             const item = pageData.initialLinks[i];
+            console.log(`\n⏳ Navigating Wrapper Link ${i + 1}/${pageData.initialLinks.length}: ${item.url}`);
             
-            // 1. If it's ALREADY a direct PixelDrain or Telegram link, grab it instantly without navigating wrapper pages!
-            if (item.isDirect) {
-                let type = item.url.includes('pixeldrain') ? "PixelDrain" : "Telegram Bot";
-                const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|WEBRip|HDRip)/i);
-                const qualityName = qMatch ? qMatch[0].toUpperCase() : "WEB-DL";
-                const sMatch = item.text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
-                const size = sMatch ? sMatch[0] : "N/A";
-
-                const qualityLabel = qualityName + " [" + type + "]";
-                if (!downloads.some(d => d.link === item.url)) {
-                    downloads.push({ quality: qualityLabel, size, language: "English", link: item.url });
-                    console.log(`   🚀 Direct Link Captured: [${qualityLabel}] -> ${item.url}`);
-                }
-                continue;
-            }
-
-            // 2. Otherwise, navigate the wrapper page (zt-links / csplayer)
-            console.log(`\n⏳ Navigating Wrapper Link ${i + 1}: ${item.url}`);
             let subPage;
             try {
                 subPage = await browser.newPage();
@@ -227,38 +205,45 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         });
                     });
                     await subPage.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
+                    
+                    // Wait for CS Player buttons to render
                     await subPage.waitForFunction(() => {
                         const bodyText = document.body.innerText;
                         return bodyText.includes('Direct Download') || bodyText.includes('Telegram Download') || bodyText.includes('File Size');
                     }, { timeout: 15000 }).catch(() => {});
-                    await new Promise(r => setTimeout(r, 2000));
+                    
+                    await new Promise(r => setTimeout(r, 3000));
                 } catch (e) {}
 
-                const finalRenderedLinks = await subPage.evaluate(() => {
+                // 🛠️ TERMINAL DEBUG: Extract and log ALL anchor and button elements found inside the CS Player page
+                const csPlayerElements = await subPage.evaluate(() => {
                     const list = [];
-                    document.querySelectorAll('a, button').forEach(el => {
-                        const h = el.href || el.getAttribute('data-href') || '';
-                        const t = (el.innerText || '').trim();
-                        if (h && !h.includes('javascript:') && !h.includes('#')) {
-                            list.push({ href: h, text: t });
+                    document.querySelectorAll('a, button, div, span').forEach(el => {
+                        const h = el.href || el.getAttribute('data-href') || el.getAttribute('onclick') || '';
+                        const t = (el.innerText || '').trim().replace(/\s+/g, ' ');
+                        if (t.length > 0 && t.length < 100) {
+                            list.push({ tag: el.tagName, text: t, href: h });
                         }
                     });
                     return list;
                 });
+
+                console.log(`\n   🛠️ [TERMINAL DEBUG DUMP] Elements found on CS Player page (${item.url}):`);
+                console.log(JSON.stringify(csPlayerElements, null, 2));
 
                 const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|WEBRip|HDRip)/i);
                 const qualityName = qMatch ? qMatch[0].toUpperCase() : "WEB-DL";
                 const sMatch = item.text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
                 const size = sMatch ? sMatch[0] : "N/A";
 
-                finalRenderedLinks.forEach(linkObj => {
-                    let targetUrl = linkObj.href;
-                    let linkText = linkObj.text.toLowerCase();
+                csPlayerElements.forEach(itemEl => {
+                    let targetUrl = itemEl.href;
+                    let linkText = itemEl.text.toLowerCase();
                     const tLower = targetUrl.toLowerCase();
 
-                    if (tLower.includes('facebook.com') || tLower.includes('youtube.com') || tLower.includes('cinesubz.net/movies') || tLower.includes('cinesubz.net/server')) return;
+                    if (!targetUrl || tLower.includes('javascript:') || tLower.includes('#') || tLower.includes('facebook.com') || tLower.includes('youtube.com')) return;
 
-                    if (tLower.includes('pixeldrain') || tLower.includes('t.me/') || tLower.includes('space') || tLower.includes('kdrive') || tLower.endsWith('.mp4') || tLower.endsWith('.mkv') || tLower.includes('download') || linkText.includes('download') || linkText.includes('telegram')) {
+                    if (tLower.includes('pixeldrain') || tLower.includes('t.me/') || tLower.includes('space') || tLower.includes('kdrive') || tLower.endsWith('.mp4') || tLower.endsWith('.mkv') || tLower.includes('server') || linkText.includes('download') || linkText.includes('telegram')) {
                         
                         let type = "Direct High-Speed Server";
                         if (tLower.includes('pixeldrain') || linkText.includes('pixeldrain')) type = "PixelDrain";
@@ -267,7 +252,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         const qualityLabel = qualityName + " [" + type + "]";
                         if (!downloads.some(d => d.link === targetUrl)) {
                             downloads.push({ quality: qualityLabel, size, language: "English", link: targetUrl });
-                            console.log(`   ✅ Wrapper Resolved Link: [${qualityLabel}] -> ${targetUrl}`);
+                            console.log(`   ✅ Captured Link: [${qualityLabel}] -> ${targetUrl}`);
                         }
                     }
                 });
@@ -318,4 +303,4 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Cinesubz Direct API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Cinesubz Debug API running on port ${PORT}`));
