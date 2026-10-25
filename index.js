@@ -125,24 +125,34 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Optimized with higher timeout & detailed logging)
+// 3. Ultra-Fast Info & Download Endpoint (Single Browser Instance + Block Unnecessary Assets)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔍 [FAST DL API] Processing Movie URL: ${movieUrl}`);
+    console.log(`🔍 [ULTRA FAST DL API] Processing Movie URL: ${movieUrl}`);
 
     let browser;
     try {
         browser = await getBrowser();
         const page = await browser.newPage();
+
+        // Block images, stylesheets, fonts, and media to make page load lightning fast
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+            if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) {
+                req.abort();
+            } else {
+                req.continue();
+            }
+        });
+
         await page.setUserAgent(HEADERS['User-Agent']);
         await page.setViewport({ width: 1280, height: 800 });
 
-        // Increased timeout to 60000ms (60 seconds) to prevent navigation timeout on Render
-        await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-        await new Promise(r => setTimeout(r, 1000));
+        await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
+        await new Promise(r => setTimeout(r, 800));
 
         const pageData = await page.evaluate(() => {
             const title = document.querySelector('meta[property="og:title"]')?.content || document.querySelector('h1')?.innerText || 'Unknown';
@@ -177,26 +187,34 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             return { title, image, quality, rating, director, story: story || 'No description available', initialLinks };
         });
 
-        await browser.close();
         console.log(`🎬 Title: ${pageData.title}`);
-        console.log(`🔗 Found ${pageData.initialLinks.length} wrapper link(s). Fetching simultaneously...`);
+        console.log(`🔗 Found ${pageData.initialLinks.length} wrapper link(s). Processing concurrently...`);
 
         let year = "2026";
         const yearMatch = pageData.title.match(/(\d{4})/);
         if (yearMatch) year = yearMatch[1];
 
+        // 🚀 Reuse the SAME browser instance and open tabs concurrently via Promise.all
         const downloadPromises = pageData.initialLinks.map(async (item) => {
-            let subBrowser;
+            let subPage;
             try {
-                subBrowser = await getBrowser();
-                const subPage = await subBrowser.newPage();
+                subPage = await browser.newPage();
+                
+                // Block assets on subpages too for max speed
+                await subPage.setRequestInterception(true);
+                subPage.on('request', (req) => {
+                    if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) {
+                        req.abort();
+                    } else {
+                        req.continue();
+                    }
+                });
+
                 await subPage.setUserAgent(HEADERS['User-Agent']);
                 
-                await subPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch((e) => {
-                    console.error(`⚠️ Sub-page goto error for ${item.url}: ${e.message}`);
-                });
+                await subPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
                 
-                await new Promise(r => setTimeout(r, 1000));
+                await new Promise(r => setTimeout(r, 600));
                 await subPage.evaluate(() => {
                     document.querySelectorAll('a, button').forEach(el => {
                         const txt = (el.innerText || '').toLowerCase();
@@ -209,7 +227,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 await subPage.waitForFunction(() => {
                     const bodyText = document.body.innerText;
                     return bodyText.includes('Direct Download') || bodyText.includes('Telegram Download');
-                }, { timeout: 15000 }).catch(() => {});
+                }, { timeout: 8000 }).catch(() => {});
 
                 const extractedLinks = await subPage.evaluate(() => {
                     const results = [];
@@ -223,7 +241,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     return results;
                 });
 
-                await subBrowser.close();
+                await subPage.close();
 
                 const linksList = [];
                 for (const btnInfo of extractedLinks) {
@@ -247,13 +265,14 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 return linksList;
 
             } catch (subErr) {
-                console.error(`❌ Sub-page processing failed for ${item.url}: ${subErr.message}`);
-                if (subBrowser) await subBrowser.close();
+                if (subPage) await subPage.close();
                 return [];
             }
         });
 
         const allResults = await Promise.all(downloadPromises);
+        await browser.close(); // Close main browser after all tasks finish
+
         const downloads = [];
         allResults.flat().forEach(d => {
             if (!downloads.some(existing => existing.link === d.link)) {
@@ -295,9 +314,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     } catch (err) {
         console.error(`❌ [CRITICAL INFODL ERROR]: ${err.message}`);
         if (browser) await browser.close();
-        res.status(500)
-           .header("Content-Type", "application/json")
-           .send(JSON.stringify({ status: false, error: err.message }, null, 2));
+        res.status(500).json({ status: false, error: err.message });
     }
 });
 
