@@ -123,13 +123,13 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Clicking Direct Download buttons to intercept True Final URL)
+// 3. Info & Download Endpoint (Optimized with Promise.all for Super Fast Scraping)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔍 [REAL DL API] Processing Movie URL: ${movieUrl}`);
+    console.log(`🔍 [FAST DL API] Processing Movie URL: ${movieUrl}`);
 
     let browser;
     try {
@@ -138,8 +138,8 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         await page.setUserAgent(HEADERS['User-Agent']);
         await page.setViewport({ width: 1280, height: 800 });
 
-        await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
-        await new Promise(r => setTimeout(r, 2000));
+        await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
+        await new Promise(r => setTimeout(r, 1000));
 
         const pageData = await page.evaluate(() => {
             const title = document.querySelector('meta[property="og:title"]')?.content || document.querySelector('h1')?.innerText || 'Unknown';
@@ -174,67 +174,57 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             return { title, image, quality, rating, director, story: story || 'No description available', initialLinks };
         });
 
+        await browser.close();
         console.log(`🎬 Title: ${pageData.title}`);
-        console.log(`🔗 Found ${pageData.initialLinks.length} initial redirect link(s).`);
+        console.log(`🔗 Found ${pageData.initialLinks.length} wrapper link(s). Fetching simultaneously...`);
 
         let year = "2026";
         const yearMatch = pageData.title.match(/(\d{4})/);
         if (yearMatch) year = yearMatch[1];
 
-        const downloads = [];
-
-        for (let i = 0; i < pageData.initialLinks.length; i++) {
-            const item = pageData.initialLinks[i];
-            console.log(`\n⏳ Navigating Wrapper Link ${i + 1}/${pageData.initialLinks.length}: ${item.url}`);
-            
-            let subPage;
+        // 🚀 PROMISE.ALL: Process all wrapper links concurrently for maximum speed!
+        const downloadPromises = pageData.initialLinks.map(async (item) => {
+            let subBrowser;
             try {
-                subPage = await browser.newPage();
+                subBrowser = await getBrowser();
+                const subPage = await subBrowser.newPage();
                 await subPage.setUserAgent(HEADERS['User-Agent']);
                 
-                await subPage.goto(item.url, { waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
+                await subPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
                 
-                // 1. Click "Go to Download Page" timer button
-                try {
-                    await new Promise(r => setTimeout(r, 2000));
-                    await subPage.evaluate(() => {
-                        document.querySelectorAll('a, button').forEach(el => {
-                            const txt = el.innerText.toLowerCase();
-                            if (txt.includes('download page') || txt.includes('go to') || txt.includes('click here')) {
-                                el.click();
-                            }
-                        });
-                    });
-                    await subPage.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
-                    
-                    // Wait for CS Player buttons to appear
-                    await subPage.waitForFunction(() => {
-                        const bodyText = document.body.innerText;
-                        return bodyText.includes('Direct Download') || bodyText.includes('Telegram Download') || bodyText.includes('File Size');
-                    }, { timeout: 15000 }).catch(() => {});
-                    
-                    await new Promise(r => setTimeout(r, 2000));
-                } catch (e) {}
-
-                // 2. 🚀 SMART CLICK INTERCEPTION: Find "Direct Download" or "Telegram" buttons and click them to get the real destination URL!
-                const realDownloadUrls = await subPage.evaluate(async () => {
-                    const results = [];
-                    const buttons = Array.from(document.querySelectorAll('a, button'));
-                    
-                    for (const btn of buttons) {
-                        const txt = (btn.innerText || '').toLowerCase();
-                        const href = btn.href || '';
-                        
-                        if (txt.includes('direct download') || txt.includes('telegram') || href.includes('pixeldrain') || href.includes('t.me')) {
-                            results.push({ text: btn.innerText, href: href });
+                // Click "Go to Download Page" button if present
+                await new Promise(r => setTimeout(r, 1000));
+                await subPage.evaluate(() => {
+                    document.querySelectorAll('a, button').forEach(el => {
+                        const txt = (el.innerText || '').toLowerCase();
+                        if (txt.includes('download page') || txt.includes('go to') || txt.includes('click here')) {
+                            el.click();
                         }
-                    }
+                    });
+                }).catch(() => {});
+
+                // Wait for final download buttons (Direct Download / Telegram)
+                await subPage.waitForFunction(() => {
+                    const bodyText = document.body.innerText;
+                    return bodyText.includes('Direct Download') || bodyText.includes('Telegram Download');
+                }, { timeout: 8000 }).catch(() => {});
+
+                const extractedLinks = await subPage.evaluate(() => {
+                    const results = [];
+                    document.querySelectorAll('a, button').forEach(btn => {
+                        const txt = btn.innerText || '';
+                        const href = btn.href || '';
+                        if (txt.toLowerCase().includes('direct download') || txt.toLowerCase().includes('telegram') || href.includes('pixeldrain') || href.includes('t.me')) {
+                            results.push({ text: txt, href: href });
+                        }
+                    });
                     return results;
                 });
 
-                // Let's also check if clicking the button opens a new tab or triggers a navigation
-                // We can extract all outbound links or listen for popup/navigation when clicking
-                for (const btnInfo of realDownloadUrls) {
+                await subBrowser.close();
+
+                const linksList = [];
+                for (const btnInfo of extractedLinks) {
                     let targetUrl = btnInfo.href;
                     let linkText = btnInfo.text.toLowerCase();
 
@@ -245,29 +235,30 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     const sMatch = item.text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
                     const size = sMatch ? sMatch[0] : "N/A";
 
-                    if (targetUrl.includes('pixeldrain') || targetUrl.includes('t.me/') || targetUrl.includes('space') || targetUrl.endsWith('.mp4') || targetUrl.endsWith('.mkv') || linkText.includes('download') || linkText.includes('telegram')) {
-                        
-                        let type = "Direct High-Speed Server";
-                        if (targetUrl.includes('pixeldrain') || linkText.includes('pixeldrain')) type = "PixelDrain";
-                        else if (targetUrl.includes('t.me/') || linkText.includes('telegram')) type = "Telegram Bot";
+                    let type = "Direct Server";
+                    if (targetUrl.includes('pixeldrain')) type = "PixelDrain";
+                    else if (targetUrl.includes('t.me/')) type = "Telegram Bot";
 
-                        const qualityLabel = qualityName + " [" + type + "]";
-                        if (!downloads.some(d => d.link === targetUrl)) {
-                            downloads.push({ quality: qualityLabel, size, language: "English", link: targetUrl });
-                            console.log(`   ✅ Real Download Link Captured: [${qualityLabel}] -> ${targetUrl}`);
-                        }
-                    }
+                    const qualityLabel = qualityName + " [" + type + "]";
+                    linksList.push({ quality: qualityLabel, size, language: "English", link: targetUrl });
                 }
+                return linksList;
 
-                await subPage.close();
             } catch (subErr) {
-                console.error(`   ❌ Failed to process sub-page: ${subErr.message}`);
-                if (subPage) await subPage.close();
+                if (subBrowser) await subBrowser.close();
+                return [];
             }
-        }
+        });
 
-        await browser.close();
-        console.log(`\n🎉 Total Final Download Links Extracted: ${downloads.length}`);
+        const allResults = await Promise.all(downloadPromises);
+        const downloads = [];
+        allResults.flat().forEach(d => {
+            if (!downloads.some(existing => existing.link === d.link)) {
+                downloads.push(d);
+            }
+        });
+
+        console.log(`🎉 Total Final Download Links Extracted: ${downloads.length}`);
         console.log(`==============================================\n`);
 
         res.json({
