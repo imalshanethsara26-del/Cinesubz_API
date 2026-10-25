@@ -80,6 +80,7 @@ app.get('/api/v1/cinesubz/latest', async (req, res) => {
 
         res.json({ status: true, creator: "@Imalsha", site: "cinesubz", page: Number(pageNum), results_count: results.length, data: results });
     } catch (err) {
+        console.error(`❌ [LATEST ERROR]: ${err.message}`);
         res.status(500).json({ status: false, error: err.message });
     }
 });
@@ -119,11 +120,12 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
 
         res.json({ status: true, creator: "@Imalsha", site: "cinesubz", results_count: results.length, data: results });
     } catch (err) {
+        console.error(`❌ [SEARCH ERROR]: ${err.message}`);
         res.status(500).json({ status: false, error: err.message });
     }
 });
 
-// 3. Info & Download Endpoint (Optimized with Promise.all for Super Fast Scraping)
+// 3. Info & Download Endpoint (Optimized with higher timeout & detailed logging)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -138,7 +140,8 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         await page.setUserAgent(HEADERS['User-Agent']);
         await page.setViewport({ width: 1280, height: 800 });
 
-        await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
+        // Increased timeout to 60000ms (60 seconds) to prevent navigation timeout on Render
+        await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
         await new Promise(r => setTimeout(r, 1000));
 
         const pageData = await page.evaluate(() => {
@@ -182,7 +185,6 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         const yearMatch = pageData.title.match(/(\d{4})/);
         if (yearMatch) year = yearMatch[1];
 
-        // 🚀 PROMISE.ALL: Process all wrapper links concurrently for maximum speed!
         const downloadPromises = pageData.initialLinks.map(async (item) => {
             let subBrowser;
             try {
@@ -190,9 +192,10 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 const subPage = await subBrowser.newPage();
                 await subPage.setUserAgent(HEADERS['User-Agent']);
                 
-                await subPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+                await subPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch((e) => {
+                    console.error(`⚠️ Sub-page goto error for ${item.url}: ${e.message}`);
+                });
                 
-                // Click "Go to Download Page" button if present
                 await new Promise(r => setTimeout(r, 1000));
                 await subPage.evaluate(() => {
                     document.querySelectorAll('a, button').forEach(el => {
@@ -203,11 +206,10 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     });
                 }).catch(() => {});
 
-                // Wait for final download buttons (Direct Download / Telegram)
                 await subPage.waitForFunction(() => {
                     const bodyText = document.body.innerText;
                     return bodyText.includes('Direct Download') || bodyText.includes('Telegram Download');
-                }, { timeout: 8000 }).catch(() => {});
+                }, { timeout: 15000 }).catch(() => {});
 
                 const extractedLinks = await subPage.evaluate(() => {
                     const results = [];
@@ -245,6 +247,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 return linksList;
 
             } catch (subErr) {
+                console.error(`❌ Sub-page processing failed for ${item.url}: ${subErr.message}`);
                 if (subBrowser) await subBrowser.close();
                 return [];
             }
@@ -290,9 +293,11 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         });
 
     } catch (err) {
-        console.error(`❌ Critical Error: ${err.message}`);
+        console.error(`❌ [CRITICAL INFODL ERROR]: ${err.message}`);
         if (browser) await browser.close();
-        res.status(500).json({ status: false, error: err.message });
+        res.status(500)
+           .header("Content-Type", "application/json")
+           .send(JSON.stringify({ status: false, error: err.message }, null, 2));
     }
 });
 
