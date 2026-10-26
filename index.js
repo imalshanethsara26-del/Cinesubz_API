@@ -20,7 +20,7 @@ const ADVANCED_HEADERS = {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ MASTER SCRAPER API is Live 🚀",
+        message: "IMALSHA CINESUBZ SCRIPT SCRAPER API is Live 🚀",
         endpoint: "/api/v1/cinesubz/extract?url=movie_page_url"
     });
 });
@@ -28,67 +28,57 @@ app.get('/', (req, res) => {
 app.get('/api/v1/cinesubz/extract', async (req, res) => {
     const movieUrl = req.query.url || "https://cinesubz.net/movies/spider-man-brand-new-day-2026-sinhala-subtitles/";
     
-    console.log(`\n🔥 [INCOMING REQUEST] URL: ${movieUrl}`);
+    console.log(`\n🔥 [DEEP SCRIPT SCAN] URL: ${movieUrl}`);
 
     try {
-        console.log(`🔍 Fetching HTML with Advanced Headers...`);
         const htmlRes = await axios.get(movieUrl, { headers: ADVANCED_HEADERS, timeout: 20000 });
-        
-        console.log(`📦 HTML Fetched Successfully! Length: ${htmlRes.data.length}`);
-        
         const $ = cheerio.load(htmlRes.data);
-        const title = $('h1').first().text().trim() || $('title').text();
-        const poster = $('img.attachment-post-thumbnail, .poster img, .s-item-cover img').attr('src') || '';
         
-        let links = [];
+        const title = $('h1').first().text().trim() || $('title').text();
+        let extractedUrls = [];
 
-        // 1. Scrape all buttons, download links, and server selection elements
-        $('a.button, a.link-btn, .download-links a, .s-dist-btn, .links_table a, .m-movies-links a, .wp-block-button__link, .button-download').each((i, el) => {
-            const text = $(el).text().trim();
-            const href = $(el).attr('href');
-            if (href && !href.includes('#') && !links.some(l => l.href === href)) {
-                links.push({ type: 'button_link', text, href });
-            }
-        });
-
-        // 2. Scrape general external links or file hosting sites (Pixeldrain, Mega, GDrive, etc.)
+        // 1. Scan all <a> tags (ignoring internal anchor links like #...)
         $('a').each((i, el) => {
             const href = $(el).attr('href');
-            const text = $(el).text().trim() || 'Link';
-            if (href && (
-                href.includes('pixeldrain') || 
-                href.includes('megaup') || 
-                href.includes('drive.google') || 
-                href.includes('1drv.ms') ||
-                href.includes('terabox') ||
-                href.includes('zippyshare') ||
-                href.includes('watch') ||
-                href.includes('download')
-            )) {
-                if (!links.some(l => l.href === href)) {
-                    links.push({ type: 'host_link', text, href });
+            const text = $(el).text().trim();
+            if (href && !href.startsWith('#') && !href.startsWith('javascript')) {
+                if (href.includes('pixeldrain') || href.includes('megaup') || href.includes('drive.google') || href.includes('1drv.ms') || href.includes('terabox') || href.includes('zippyshare') || href.includes('download') || href.includes('watch')) {
+                    extractedUrls.push({ source: 'anchor_tag', text, href });
                 }
             }
         });
 
-        // 3. Scrape iframes (Player embeds)
-        $('iframe').each((i, el) => {
-            const src = $(el).attr('src');
-            if (src && !links.some(l => l.href === src)) {
-                links.push({ type: 'iframe_embed', text: 'Player Embed', href: src });
+        // 2. Scan all <script> tags for hidden URLs or JSON payloads
+        $('script').each((i, el) => {
+            const scriptContent = $(el).html() || '';
+            // Regex to find URLs inside scripts
+            const urlMatches = scriptContent.match(/https?:\/\/[^\s"'<>]+(?:pixeldrain|megaup|drive\.google|terabox|zippyshare)[^\s"'<>]+/gi);
+            if (urlMatches) {
+                urlMatches.forEach(url => {
+                    if (!extractedUrls.some(u => u.href === url)) {
+                        extractedUrls.push({ source: 'script_tag', text: 'Hidden Script URL', href: url });
+                    }
+                });
             }
         });
 
-        console.log(`🎯 Extracted total ${links.length} potential links/embeds.`);
+        // 3. Scan iframes
+        $('iframe').each((i, el) => {
+            const src = $(el).attr('src');
+            if (src && !extractedUrls.some(u => u.href === src)) {
+                extractedUrls.push({ source: 'iframe', text: 'Player Embed', href: src });
+            }
+        });
+
+        console.log(`🎯 Deep Scan Found ${extractedUrls.length} valid links/embeds.`);
 
         res.json({
             status: true,
             creator: "@Imalsha",
             movie_url: movieUrl,
             title: title,
-            poster: poster,
-            links_count: links.length,
-            links: links
+            links_count: extractedUrls.length,
+            links: extractedUrls
         });
 
     } catch (err) {
@@ -97,4 +87,4 @@ app.get('/api/v1/cinesubz/extract', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Master Scraper API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Script Scraper API running on port ${PORT}`));
