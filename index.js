@@ -31,7 +31,7 @@ async function getBrowser() {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ DEEP SCRIPT SCANNER API is Live 🚀",
+        message: "IMALSHA CINESUBZ FLEXIBLE SCANNER API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -131,13 +131,13 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Deep Script Scanner Info & Download Endpoint
+// 3. Flexible Deep Scanner Info & Download Endpoint
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔍 [DEEP SCRIPT SCANNER] Processing Movie URL: ${movieUrl}`);
+    console.log(`🔍 [FLEXIBLE SCANNER] Processing Movie URL: ${movieUrl}`);
 
     let browser;
     try {
@@ -150,7 +150,6 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
         await new Promise(r => setTimeout(r, 2000));
 
-        // Extract metadata and scan ALL script contents & DOM for hidden file links
         const scannedData = await page.evaluate(() => {
             const title = document.querySelector('meta[property="og:title"]')?.content || document.querySelector('h1')?.innerText || 'Unknown';
             const image = document.querySelector('meta[property="og:image"]')?.content || '';
@@ -168,13 +167,13 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
             const allFoundUrls = new Set();
 
-            // 1. Scan all <a>, <button> elements and data attributes
-            document.querySelectorAll('a, button, [data-href], [data-url], [data-link]').forEach(el => {
-                const href = el.href || el.getAttribute('data-href') || el.getAttribute('data-url') || el.getAttribute('data-link') || '';
+            // 1. Scan all elements and attributes
+            document.querySelectorAll('a, button, [data-href], [data-url], [data-link], iframe').forEach(el => {
+                const href = el.href || el.getAttribute('data-href') || el.getAttribute('data-url') || el.getAttribute('data-link') || el.src || '';
                 if (href) allFoundUrls.add(href);
             });
 
-            // 2. Scan ALL Script tags for embedded URLs or JSON data
+            // 2. Scan ALL Script tags
             document.querySelectorAll('script').forEach(sc => {
                 const content = sc.textContent || sc.innerHTML || '';
                 const matches = content.match(/https?:\/\/[^\s"'<>]+/gi);
@@ -192,8 +191,8 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         await browser.close();
 
-        console.log(`🎬 Title: ${scaredData = scannedData.title}`);
-        console.log(`🔗 Total raw URLs found via deep scan: ${scannedData.urls.length}`);
+        console.log(`🎬 Title: ${scannedData.title}`);
+        console.log(`🔗 Total raw URLs found: ${scannedData.urls.length}`);
 
         let year = "2026";
         const yearMatch = scannedData.title.match(/(\d{4})/);
@@ -205,27 +204,37 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             let hLower = targetUrl.toLowerCase();
             targetUrl = targetUrl.replace(/['"<>)]+$/, '');
 
+            // Skip unwanted junk domains
             if (
                 hLower.includes('facebook.com') ||
                 hLower.includes('instagram.com') ||
-                hLower.includes('cinesubzadmin') ||
                 hLower.includes('google.com') ||
                 hLower.includes('cloudflare') ||
                 hLower.includes('jquery') ||
+                hLower.includes('wp-content') ||
+                hLower.includes('wp-includes') ||
                 hLower.includes('#') ||
                 hLower.includes('javascript:')
             ) continue;
 
-            const isPixelDrain = hLower.includes('pixeldrain.com/api/file/');
-            const isSuperCloud = hLower.includes('supercloud') || hLower.includes('drive7.');
-            const isTelegramBot = hLower.includes('t.me/') && targetUrl.includes('?start=');
-            const isDirectFile = hLower.includes('drive.csplayer2.space') && (targetUrl.includes('?ext=') || targetUrl.includes('.mp4') || targetUrl.includes('.mkv'));
+            // 🎯 FLEXIBLE MATCHING: Catch pixeldrain, supercloud, telegram, or csplayer links
+            if (
+                hLower.includes('pixeldrain') ||
+                hLower.includes('supercloud') ||
+                hLower.includes('t.me') ||
+                hLower.includes('telegram') ||
+                hLower.includes('csplayer') ||
+                hLower.includes('drive7')
+            ) {
+                // Skip generic empty server roots like server1/ if needed, but keep valid files or wrapper links
+                if (hLower.endsWith('/server1/') || hLower.endsWith('/server2/') || hLower.endsWith('/server3/') || hLower.endsWith('/server4/') || hLower.endsWith('/server5/') || hLower.endsWith('/server6/') || hLower.endsWith('/server7/')) {
+                    continue;
+                }
 
-            if (isPixelDrain || isSuperCloud || isTelegramBot || isDirectFile) {
                 let type = "Direct Server";
-                if (isPixelDrain) type = "PixelDrain";
-                else if (isTelegramBot) type = "Telegram Bot";
-                else if (isSuperCloud || isDirectFile) type = "Direct High-Speed Server";
+                if (hLower.includes('pixeldrain')) type = "PixelDrain";
+                else if (hLower.includes('t.me') || hLower.includes('telegram')) type = "Telegram Bot";
+                else type = "Direct High-Speed Server";
 
                 const qMatch = targetUrl.match(/(2160p|4K|1080p|720p|480p)/i) || scannedData.title.match(/(2160p|4K|1080p|720p|480p)/i) || ['WEB-DL'];
                 const qualityName = qMatch[0].toUpperCase();
@@ -237,7 +246,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         }
 
-        console.log(`🎉 Final Clean Extracted Links: ${downloads.length}`);
+        console.log(`🎉 Final Flexible Extracted Links: ${downloads.length}`);
         console.log(`==============================================\n`);
 
         res.json({
@@ -275,4 +284,4 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Cinesubz Deep Script Scanner API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Cinesubz Flexible Scanner API running on port ${PORT}`));
