@@ -31,7 +31,7 @@ async function getBrowser() {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ ULTIMATE DL API is Live 🚀",
+        message: "IMALSHA CINESUBZ CLICK-THROUGH DL API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -131,13 +131,13 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Ultimate Multi-Layered Info & Download Endpoint
+// 3. Ultimate Click-Through Info & Download Endpoint
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔍 [ULTIMATE API] Processing Movie URL: ${movieUrl}`);
+    console.log(`🔍 [CLICK-THROUGH API] Processing Movie URL: ${movieUrl}`);
 
     let browser;
     try {
@@ -150,7 +150,6 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
         await new Promise(r => setTimeout(r, 1500));
 
-        // Scrape main movie metadata and wrapper/direct links
         const pageData = await page.evaluate(() => {
             const title = document.querySelector('meta[property="og:title"]')?.content || document.querySelector('h1')?.innerText || 'Unknown';
             const image = document.querySelector('meta[property="og:image"]')?.content || '';
@@ -170,10 +169,8 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             document.querySelectorAll('a').forEach(a => {
                 const href = a.href || '';
                 const hLower = href.toLowerCase();
-                const txt = a.innerText || '';
-
-                if (!hLower.includes('facebook') && !hLower.includes('instagram') && !hLower.includes('#') && !hLower.includes('javascript:')) {
-                    initialLinks.push({ url: href, text: txt + ' ' + (a.parentElement?.innerText || '') });
+                if (hLower.includes('csplayer') || hLower.includes('zt-links') || hLower.includes('space')) {
+                    initialLinks.push({ url: href, text: a.innerText + ' ' + (a.parentElement?.innerText || '') });
                 }
             });
 
@@ -181,7 +178,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         });
 
         console.log(`🎬 Title: ${pageData.title}`);
-        console.log(`🔗 Total links found on main page: ${pageData.initialLinks.length}`);
+        console.log(`🔗 Found ${pageData.initialLinks.length} wrapper link(s). Simulating clicks...`);
 
         let year = "2026";
         const yearMatch = pageData.title.match(/(\d{4})/);
@@ -190,124 +187,85 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         const downloads = [];
         const capturedUrls = new Set();
 
-        // Process links found directly on the main page first
-        for (const item of pageData.initialLinks) {
-            capturedUrls.add(item.url);
-        }
-
-        // Now deep dive into wrapper pages (like csplayer, zt-links, etc.) using Network Interception & DOM
-        const wrapperLinks = pageData.initialLinks.filter(l => l.url.toLowerCase().includes('csplayer') || l.url.toLowerCase().includes('zt-links') || l.url.toLowerCase().includes('space'));
-
-        for (const wrap of wrapperLinks) {
+        for (const wrap of pageData.initialLinks) {
             let subPage;
             try {
                 subPage = await browser.newPage();
                 await subPage.setUserAgent(HEADERS['User-Agent']);
 
-                // 🕵️‍♂️ Network Interception: Capture any background JSON/XHR/Fetch responses
-                subPage.on('response', async (response) => {
+                // Intercept network requests and navigations inside wrapper page
+                subPage.on('response', response => {
                     try {
-                        const rUrl = response.url();
-                        const ct = response.headers()['content-type'] || '';
-                        if (ct.includes('json') || rUrl.includes('api') || rUrl.includes('get') || rUrl.includes('file')) {
-                            const json = await response.json().catch(() => null);
-                            if (json) {
-                                JSON.stringify(json, (key, value) => {
-                                    if (typeof value === 'string' && value.startsWith('http')) {
-                                        capturedUrls.add(value);
-                                    }
-                                    return value;
-                                });
-                            }
+                        const u = response.url();
+                        if (u.includes('pixeldrain') || u.includes('supercloud') || u.includes('t.me') || u.includes('drive7') || u.includes('ext=')) {
+                            capturedUrls.add(u);
                         }
                     } catch (e) {}
                 });
 
-                await subPage.goto(wrap.url, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-                
-                // Wait for loader & JS execution
-                await new Promise(r => setTimeout(r, 4000));
-
-                // Extract all DOM hrefs, data-attributes, and script contents
-                const extraLinks = await subPage.evaluate(() => {
-                    let fileSize = 'N/A';
-                    const allText = document.body.innerText || '';
-                    const matchSize = allText.match(/File Size:\s*([^\n]+)/i);
-                    if (matchSize && matchSize[1]) {
-                        fileSize = matchSize[1].trim();
+                subPage.on('framenavigated', frame => {
+                    if (frame === subPage.mainFrame()) {
+                        const u = frame.url();
+                        if (!u.includes('csplayer2.space')) {
+                            capturedUrls.add(u);
+                        }
                     }
-
-                    const found = [];
-                    document.querySelectorAll('a, button, [data-href], [data-url], [onclick]').forEach(el => {
-                        const href = el.href || el.getAttribute('href') || el.getAttribute('data-href') || el.getAttribute('data-url') || '';
-                        const onclick = el.getAttribute('onclick') || '';
-                        if (href) found.push(href);
-                        if (onclick) {
-                            const m = onclick.match(/(https?:\/\/[^\s'"]+)/);
-                            if (m) found.push(m[1]);
-                        }
-                    });
-
-                    // Scan script tags
-                    document.querySelectorAll('script').forEach(sc => {
-                        const content = sc.textContent || sc.innerHTML || '';
-                        const matches = content.match(/https?:\/\/[^\s"'<>]+/gi);
-                        if (matches) {
-                            matches.forEach(m => found.push(m));
-                        }
-                    });
-
-                    // Scan full HTML body
-                    const bodyMatches = document.body.innerHTML.match(/https?:\/\/[^\s"'<>]+/gi) || [];
-                    bodyMatches.forEach(m => found.push(m));
-
-                    return { fileSize, found };
                 });
 
-                await subPage.close();
+                await subPage.goto(wrap.url, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+                
+                // Wait for "Preparing Your Download" loader to finish
+                await new Promise(r => setTimeout(r, 4500));
 
-                extraLinks.found.forEach(u => capturedUrls.add(u));
+                // 🖱️ Automatically Click the "Direct Download" or "Telegram" buttons!
+                await subPage.evaluate(() => {
+                    const elements = Array.from(document.querySelectorAll('a, button'));
+                    elements.forEach(el => {
+                        const txt = (el.innerText || '').toLowerCase();
+                        if (txt.includes('direct download') || txt.includes('telegram')) {
+                            el.click();
+                        }
+                    });
+                });
+
+                // Wait for click action and redirection/fetch to complete
+                await new Promise(r => setTimeout(r, 3500));
+
+                // Grab any remaining hrefs from DOM after click
+                const postClickHrefs = await subPage.evaluate(() => {
+                    const arr = [];
+                    document.querySelectorAll('a').forEach(a => {
+                        if (a.href) arr.push(a.href);
+                    });
+                    return arr;
+                });
+                postClickHrefs.forEach(h => capturedUrls.add(h));
+
+                await subPage.close();
 
             } catch (subErr) {
                 if (subPage) await subPage.close();
             }
         }
 
-        // Filter and clean final download links
+        // 🎯 STRICT FILTERING for real downloadable files
         for (let targetUrl of capturedUrls) {
             let hLower = targetUrl.toLowerCase();
             targetUrl = targetUrl.replace(/['"<>)]+$/, '');
 
-            if (
-                hLower.includes('cinesubzadmin') ||
-                hLower.includes('facebook.com') ||
-                hLower.includes('instagram.com') ||
-                hLower.includes('twitter.com') ||
-                hLower.includes('google.com') ||
-                hLower.includes('#') ||
-                hLower.includes('javascript:')
-            ) continue;
+            const isPixelDrain = hLower.includes('pixeldrain.com/api/file/');
+            const isSuperCloud = hLower.includes('supercloud') || hLower.includes('drive7.');
+            const isTelegramBot = hLower.includes('t.me/') && targetUrl.includes('?start=');
+            const isDirectFile = hLower.includes('drive.csplayer2.space') && (targetUrl.includes('?ext=') || targetUrl.includes('.mp4') || targetUrl.includes('.mkv'));
 
-            if (
-                hLower.includes('pixeldrain.com') ||
-                hLower.includes('supercloud') ||
-                hLower.includes('t.me/') ||
-                hLower.includes('telegram.me') ||
-                hLower.includes('drive7.') ||
-                hLower.includes('drive.') ||
-                hLower.includes('kdrive') ||
-                hLower.includes('csplayer2.space/server') ||
-                targetUrl.endsWith('.mp4') ||
-                targetUrl.endsWith('.mkv')
-            ) {
+            if (isPixelDrain || isSuperCloud || isTelegramBot || isDirectFile) {
                 let type = "Direct Server";
-                if (hLower.includes('pixeldrain')) type = "PixelDrain";
-                else if (hLower.includes('t.me/') || hLower.includes('telegram.me')) type = "Telegram Bot";
-                else if (hLower.includes('supercloud') || hLower.includes('drive7.')) type = "Direct High-Speed Server";
-                else if (hLower.includes('csplayer2.space/server')) type = "Direct High-Speed Server";
+                if (isPixelDrain) type = "PixelDrain";
+                else if (isTelegramBot) type = "Telegram Bot";
+                else if (isSuperCloud || isDirectFile) type = "Direct High-Speed Server";
 
-                const qMatch = targetUrl.match(/(2160p|4K|1080p|720p|480p)/i) || pageData.title.match(/(2160p|4K|1080p|720p|480p)/i);
-                const qualityName = qMatch ? qMatch[0].toUpperCase() : "WEB-DL";
+                const qMatch = targetUrl.match(/(2160p|4K|1080p|720p|480p)/i) || pageData.title.match(/(2160p|4K|1080p|720p|480p)/i) || ['WEB-DL'];
+                const qualityName = qMatch[0].toUpperCase();
 
                 const qualityLabel = `${qualityName} [${type}]`;
                 if (!downloads.some(d => d.link === targetUrl)) {
@@ -318,7 +276,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         await browser.close();
 
-        console.log(`🎉 Total Final Download Links Extracted: ${downloads.length}`);
+        console.log(`🎉 Total Valid Click-Through Download Links: ${downloads.length}`);
         console.log(`==============================================\n`);
 
         res.json({
@@ -356,4 +314,4 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Cinesubz Ultimate DL API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Cinesubz Click-Through DL API running on port ${PORT}`));
