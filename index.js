@@ -10,7 +10,7 @@ app.use(cors());
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ NATIVE PUPPETEER API is Live 🚀",
+        message: "IMALSHA CINESUBZ SMART PUPPETEER API is Live 🚀",
         endpoint: "/api/v1/cinesubz/extract?url=movie_page_url"
     });
 });
@@ -19,13 +19,12 @@ app.get('/api/v1/cinesubz/extract', async (req, res) => {
     const movieUrl = req.query.url || "https://cinesubz.net/movies/spider-man-brand-new-day-2026-sinhala-subtitles/";
     
     console.log(`\n==============================================`);
-    console.log(`🚀 [NATIVE PUPPETEER] Processing: ${movieUrl}`);
+    console.log(`🚀 [SMART PUPPETEER] Processing: ${movieUrl}`);
     console.log(`==============================================`);
 
     let browser = null;
 
     try {
-        // 1. Launch Headless Browser (Optimized for Render environment)
         browser = await puppeteer.launch({
             headless: true,
             args: [
@@ -42,14 +41,12 @@ app.get('/api/v1/cinesubz/extract', async (req, res) => {
 
         const page = await browser.newPage();
         
-        // Set realistic User-Agent & Viewport
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
         await page.setViewport({ width: 1280, height: 800 });
 
         console.log(`🌐 Navigating to movie page...`);
         await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-        // Extract Movie Title
         const title = await page.evaluate(() => {
             const h1 = document.querySelector('h1.entry-title, h1.title, h1');
             return h1 ? h1.innerText.trim() : document.title;
@@ -57,32 +54,65 @@ app.get('/api/v1/cinesubz/extract', async (req, res) => {
 
         console.log(`🎯 Movie Title: "${title}"`);
 
-        // 2. Find the download trigger link (e.g. api redirect link)
-        console.log(`🔍 Searching for download trigger links...`);
+        // 1. Find the actual movie download trigger link (Strictly filtering out ads & badges)
+        console.log(`🔍 Searching for real movie download buttons...`);
         const downloadTriggerUrl = await page.evaluate(() => {
-            const btn = document.querySelector('a.button, a.link-btn, .download-links a, a[href*="/api/"], a[href*="csplayer"]');
-            return btn ? btn.href : null;
+            const allLinks = Array.from(document.querySelectorAll('a'));
+            
+            // Find a link that is inside the movie content and matches download criteria
+            const target = allLinks.find(a => {
+                const href = a.href || '';
+                const text = (a.innerText || '').toLowerCase();
+                
+                // EXCLUDE ADS & BADGES DEFINITELY
+                if (
+                    href.includes('bestweb.lk') || 
+                    href.includes('1xbet') || 
+                    href.includes('facebook.com') || 
+                    href.includes('whatsapp.com') ||
+                    href.includes('t.me/share')
+                ) {
+                    return false;
+                }
+
+                // MUST be a valid movie download trigger (has resolution text or download keyword)
+                const isMovieDownloadBtn = 
+                    text.includes('download') || 
+                    text.includes('webrip') || 
+                    text.includes('hd') || 
+                    text.includes('720p') || 
+                    text.includes('1080p') || 
+                    href.includes('/api/') || 
+                    href.includes('csplayer');
+
+                return isMovieDownloadBtn;
+            });
+
+            return target ? target.href : null;
         });
 
         let downloadLinks = [];
 
         if (downloadTriggerUrl) {
-            console.log(`🔗 Found trigger link: ${downloadTriggerUrl}`);
-            console.log(`⏳ Navigating to redirect/timer page and waiting for countdown...`);
+            console.log(`🔗 Found valid download trigger link: ${downloadTriggerUrl}`);
+            console.log(`⏳ Navigating to redirect/timer page...`);
             
-            // Go to the redirect page
             await page.goto(downloadTriggerUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-            // Wait for 5 seconds to let the timer run and the final player page (csplayer2.space) to load
+            // Wait for 5 seconds for the timer and player page to load
             await new Promise(r => setTimeout(r, 5000));
 
-            // Scrape final download links from the resolved page
+            // Scrape final host links (Pixeldrain, Direct, Telegram)
             downloadLinks = await page.evaluate(() => {
                 const links = [];
                 document.querySelectorAll('a').forEach(a => {
-                    const href = a.href;
+                    const href = a.href || '';
                     const text = a.innerText.trim();
+                    
                     if (href && !href.startsWith('#')) {
+                        // EXCLUDE ANY JUNK ON THE REDIRECT PAGE TOO
+                        if (href.includes('bestweb.lk') || href.includes('1xbet')) return;
+
                         const isFileHost = 
                             href.includes('pixeldrain') || 
                             href.includes('megaup') || 
@@ -102,13 +132,16 @@ app.get('/api/v1/cinesubz/extract', async (req, res) => {
                 return links;
             });
         } else {
-            console.log(`⚠️ Trigger link not found directly, scanning current page...`);
+            console.log(`⚠️ Trigger link not found directly, scanning page content...`);
             downloadLinks = await page.evaluate(() => {
                 const links = [];
                 document.querySelectorAll('a').forEach(a => {
-                    const href = a.href;
+                    const href = a.href || '';
                     const text = a.innerText.trim();
+                    
                     if (href && !href.startsWith('#')) {
+                        if (href.includes('bestweb.lk') || href.includes('1xbet')) return;
+
                         if (href.includes('pixeldrain') || href.includes('megaup') || href.includes('drive.google') || href.includes('terabox') || href.includes('t.me/')) {
                             if (!links.some(l => l.href === href)) {
                                 links.push({ text: text || 'Download Link', href });
@@ -140,4 +173,4 @@ app.get('/api/v1/cinesubz/extract', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Native Puppeteer API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Smart Puppeteer API running on port ${PORT}`));
