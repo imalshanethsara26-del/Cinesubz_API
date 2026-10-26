@@ -40,7 +40,7 @@ app.get('/', (req, res) => {
     });
 });
 
-// 1. Latest Movies Endpoint
+// 1. Latest Movies Endpoint (Fixed Poster Extraction)
 app.get('/api/v1/cinesubz/latest', async (req, res) => {
     try {
         const pageNum = req.query.page || 1;
@@ -58,11 +58,13 @@ app.get('/api/v1/cinesubz/latest', async (req, res) => {
             if (!title) title = $(el).attr('title') || '';
             if (!title) title = $(el).text().trim();
 
-            let img = $(el).find('img').attr('src');
-            if (!img) img = $(el).find('img').attr('data-src');
-            if (!img) img = parent.find('img').attr('src');
-            if (!img) img = parent.find('img').attr('data-src');
+            // Robust image extraction for posters
+            let img = $(el).find('img').attr('src') || $(el).find('img').attr('data-src') || $(el).find('img').attr('data-lazy-src');
+            if (!img) {
+                img = parent.find('img').attr('src') || parent.find('img').attr('data-src') || parent.find('img').attr('data-lazy-src');
+            }
             if (!img) img = '';
+            if (img.startsWith('//')) img = 'https:' + img;
 
             let quality = parent.find('.quality, .badge').text().trim();
             if (!quality) quality = 'WEB-DL';
@@ -80,12 +82,11 @@ app.get('/api/v1/cinesubz/latest', async (req, res) => {
 
         res.json({ status: true, creator: "@Imalsha", site: "cinesubz", page: Number(pageNum), results_count: results.length, data: results });
     } catch (err) {
-        console.error(`❌ [LATEST ERROR]: ${err.message}`);
         res.status(500).json({ status: false, error: err.message });
     }
 });
 
-// 2. Search Endpoint
+// 2. Search Endpoint (Fixed Poster Extraction)
 app.get('/api/v1/cinesubz/search', async (req, res) => {
     try {
         const query = req.query.q;
@@ -104,34 +105,40 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
             if (!title) title = $(el).attr('title') || '';
             if (!title) title = $(el).text().trim();
 
-            let img = $(el).find('img').attr('src');
-            if (!img) img = $(el).find('img').attr('data-src');
-            if (!img) img = parent.find('img').attr('src');
-            if (!img) img = parent.find('img').attr('data-src');
+            let img = $(el).find('img').attr('src') || $(el).find('img').attr('data-src') || $(el).find('img').attr('data-lazy-src');
+            if (!img) {
+                img = parent.find('img').attr('src') || parent.find('img').attr('data-src') || parent.find('img').attr('data-lazy-src');
+            }
             if (!img) img = '';
+            if (img.startsWith('//')) img = 'https:' + img;
+
+            let quality = parent.find('.quality, .badge').text().trim();
+            if (!quality) quality = 'WEB-DL';
+
+            let rating = parent.find('.imdb-rate, .rating').text().trim();
+            if (!rating) rating = 'N/A';
 
             if (href.includes('cinesubz.') && (href.includes('/movies/') || href.includes('/tvshows/')) && title.length > 2) {
                 title = title.replace(/\t|\n/g, '').trim();
                 if (!results.some(r => r.link === href)) {
-                    results.push({ title, image: img, link: href });
+                    results.push({ title, image: img, quality, rating, link: href });
                 }
             }
         });
 
         res.json({ status: true, creator: "@Imalsha", site: "cinesubz", results_count: results.length, data: results });
     } catch (err) {
-        console.error(`❌ [SEARCH ERROR]: ${err.message}`);
         res.status(500).json({ status: false, error: err.message });
     }
 });
 
-// 3. Final & Working Info & Download Endpoint (Targeting csplayer2.space correctly)
+// 3. Info & Download Endpoint (Deep Scraping inside csplayer2.space for hidden download links)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔍 [FINAL DL API] Processing Movie URL: ${movieUrl}`);
+    console.log(`🔍 [INFODL API] Processing Movie URL: ${movieUrl}`);
 
     let browser;
     try {
@@ -159,7 +166,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 }
             });
 
-            // Grab wrapper links pointing to csplayer, zt-links, or download buttons
+            // Grab all wrapper/player links pointing to csplayer, zt-links, or space
             const initialLinks = [];
             document.querySelectorAll('a').forEach(a => {
                 const href = a.href || '';
@@ -179,7 +186,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         });
 
         console.log(`🎬 Title: ${pageData.title}`);
-        console.log(`🔗 Found ${pageData.initialLinks.length} wrapper link(s). Deep scraping...`);
+        console.log(`🔗 Found ${pageData.initialLinks.length} wrapper link(s). Deep scraping csplayer...`);
 
         let year = "2026";
         const yearMatch = pageData.title.match(/(\d{4})/);
@@ -196,8 +203,8 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 
                 await subPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
                 
-                // Wait for csplayer page to load completely (as shown in your video)
-                await new Promise(r => setTimeout(r, 2500));
+                // Wait for csplayer to render hidden buttons and file info
+                await new Promise(r => setTimeout(r, 3000));
 
                 const scrapedData = await subPage.evaluate(() => {
                     let fileSize = 'N/A';
@@ -209,9 +216,9 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     }
 
                     const links = [];
-                    document.querySelectorAll('a').forEach(a => {
-                        const href = a.href || '';
-                        const txt = a.innerText || '';
+                    document.querySelectorAll('a, button').forEach(el => {
+                        const href = el.href || el.getAttribute('data-href') || '';
+                        const txt = el.innerText || '';
                         if (href && !href.includes('#') && !href.includes('javascript:')) {
                             links.push({ href, text: txt });
                         }
@@ -227,7 +234,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     let txt = (lObj.text || '').toLowerCase();
                     let hLower = targetUrl.toLowerCase();
 
-                    // Filter out admin or irrelevant links, keep actual downloads/bots/servers
+                    // Filter out admin support links or irrelevant social pages
                     if (hLower.includes('cinesubzadmin') || hLower.includes('facebook') || hLower.includes('instagram')) continue;
 
                     if (
@@ -235,6 +242,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         hLower.includes('supercloud') ||
                         hLower.includes('t.me/') ||
                         hLower.includes('telegram.me') ||
+                        hLower.includes('drive.csplayer') ||
                         hLower.includes('drive') ||
                         hLower.includes('kdrive') ||
                         txt.includes('direct download') ||
@@ -243,7 +251,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         let type = "Direct Server";
                         if (hLower.includes('pixeldrain')) type = "PixelDrain";
                         else if (hLower.includes('t.me/') || hLower.includes('telegram.me') || txt.includes('telegram')) type = "Telegram Bot";
-                        else if (hLower.includes('supercloud') || txt.includes('direct download')) type = "Direct High-Speed Server";
+                        else if (hLower.includes('supercloud') || hLower.includes('drive.csplayer') || txt.includes('direct download')) type = "Direct High-Speed Server";
 
                         const combinedText = item.text + ' ' + scrapedData.fileSize;
                         const qMatch = combinedText.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|WEBRip|HDRip)/i);
