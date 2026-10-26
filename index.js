@@ -1,7 +1,6 @@
 const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
-const puppeteer = require('puppeteer');
 const cors = require('cors');
 
 const app = express();
@@ -13,25 +12,11 @@ const HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 };
 
-async function getBrowser() {
-    return await puppeteer.launch({
-        headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--no-zygote',
-            '--single-process'
-        ]
-    });
-}
-
 // Root Status Route
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ FLEXIBLE SCANNER API is Live 🚀",
+        message: "IMALSHA CINESUBZ PROXY/BRIDGE API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -40,7 +25,7 @@ app.get('/', (req, res) => {
     });
 });
 
-// 1. Latest Movies Endpoint
+// 1. Latest Movies Endpoint (Using Axios & Cheerio)
 app.get('/api/v1/cinesubz/latest', async (req, res) => {
     try {
         const pageNum = req.query.page || 1;
@@ -131,157 +116,36 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Flexible Deep Scanner Info & Download Endpoint
+// 3. Smart Proxy Info & Download Endpoint (Using Chamindu's Backend)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔍 [FLEXIBLE SCANNER] Processing Movie URL: ${movieUrl}`);
+    console.log(`🚀 [PROXY API] Fetching links for: ${movieUrl}`);
 
-    let browser;
     try {
-        browser = await getBrowser();
-        const page = await browser.newPage();
+        // Construct Chamindu's API URL dynamically with the requested movie URL
+        const encodedTargetUrl = encodeURIComponent(movieUrl);
+        const chaminduApiUrl = `https://api.chamindu.site/api/v1/movies/cinesubz/infodl?q=${encodedTargetUrl}&api_key=chama_api_5dc8403e460b74f6f8eda19f55746e08`;
 
-        await page.setUserAgent(HEADERS['User-Agent']);
-        await page.setViewport({ width: 1280, height: 800 });
+        const response = await axios.get(chaminduApiUrl, { timeout: 20000 });
+        const apiData = response.data;
 
-        await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
-        await new Promise(r => setTimeout(r, 2000));
-
-        const scannedData = await page.evaluate(() => {
-            const title = document.querySelector('meta[property="og:title"]')?.content || document.querySelector('h1')?.innerText || 'Unknown';
-            const image = document.querySelector('meta[property="og:image"]')?.content || '';
-            const quality = document.querySelector('.quality')?.innerText || 'WEB-DL';
-            const rating = document.querySelector('.imdb-rate')?.innerText || 'N/A';
-            const director = document.querySelector('span.director')?.innerText || 'N/A';
-
-            let story = '';
-            document.querySelectorAll('p').forEach(p => {
-                const txt = p.innerText.trim();
-                if (txt.length > 30 && !txt.includes('උපසිරැසි') && !txt.includes('Download') && !story) {
-                    story = txt;
-                }
-            });
-
-            const allFoundUrls = new Set();
-
-            // 1. Scan all elements and attributes
-            document.querySelectorAll('a, button, [data-href], [data-url], [data-link], iframe').forEach(el => {
-                const href = el.href || el.getAttribute('data-href') || el.getAttribute('data-url') || el.getAttribute('data-link') || el.src || '';
-                if (href) allFoundUrls.add(href);
-            });
-
-            // 2. Scan ALL Script tags
-            document.querySelectorAll('script').forEach(sc => {
-                const content = sc.textContent || sc.innerHTML || '';
-                const matches = content.match(/https?:\/\/[^\s"'<>]+/gi);
-                if (matches) {
-                    matches.forEach(m => allFoundUrls.add(m));
-                }
-            });
-
-            // 3. Scan entire page HTML body
-            const bodyMatches = document.body.innerHTML.match(/https?:\/\/[^\s"'<>]+/gi) || [];
-            bodyMatches.forEach(m => allFoundUrls.add(m));
-
-            return { title, image, quality, rating, director, story: story || 'No description available', urls: Array.from(allFoundUrls) };
-        });
-
-        await browser.close();
-
-        console.log(`🎬 Title: ${scannedData.title}`);
-        console.log(`🔗 Total raw URLs found: ${scannedData.urls.length}`);
-
-        let year = "2026";
-        const yearMatch = scannedData.title.match(/(\d{4})/);
-        if (yearMatch) year = yearMatch[1];
-
-        const downloads = [];
-
-        for (let targetUrl of scannedData.urls) {
-            let hLower = targetUrl.toLowerCase();
-            targetUrl = targetUrl.replace(/['"<>)]+$/, '');
-
-            // Skip unwanted junk domains
-            if (
-                hLower.includes('facebook.com') ||
-                hLower.includes('instagram.com') ||
-                hLower.includes('google.com') ||
-                hLower.includes('cloudflare') ||
-                hLower.includes('jquery') ||
-                hLower.includes('wp-content') ||
-                hLower.includes('wp-includes') ||
-                hLower.includes('#') ||
-                hLower.includes('javascript:')
-            ) continue;
-
-            // 🎯 FLEXIBLE MATCHING: Catch pixeldrain, supercloud, telegram, or csplayer links
-            if (
-                hLower.includes('pixeldrain') ||
-                hLower.includes('supercloud') ||
-                hLower.includes('t.me') ||
-                hLower.includes('telegram') ||
-                hLower.includes('csplayer') ||
-                hLower.includes('drive7')
-            ) {
-                // Skip generic empty server roots like server1/ if needed, but keep valid files or wrapper links
-                if (hLower.endsWith('/server1/') || hLower.endsWith('/server2/') || hLower.endsWith('/server3/') || hLower.endsWith('/server4/') || hLower.endsWith('/server5/') || hLower.endsWith('/server6/') || hLower.endsWith('/server7/')) {
-                    continue;
-                }
-
-                let type = "Direct Server";
-                if (hLower.includes('pixeldrain')) type = "PixelDrain";
-                else if (hLower.includes('t.me') || hLower.includes('telegram')) type = "Telegram Bot";
-                else type = "Direct High-Speed Server";
-
-                const qMatch = targetUrl.match(/(2160p|4K|1080p|720p|480p)/i) || scannedData.title.match(/(2160p|4K|1080p|720p|480p)/i) || ['WEB-DL'];
-                const qualityName = qMatch[0].toUpperCase();
-
-                const qualityLabel = `${qualityName} [${type}]`;
-                if (!downloads.some(d => d.link === targetUrl)) {
-                    downloads.push({ quality: qualityLabel, size: "N/A", language: "English", link: targetUrl });
-                }
-            }
+        // Override creator name to @Imalsha as requested
+        if (apiData) {
+            apiData.creator = "@Imalsha";
         }
 
-        console.log(`🎉 Final Flexible Extracted Links: ${downloads.length}`);
+        console.log(`🎉 Successfully fetched and bridged data!`);
         console.log(`==============================================\n`);
 
-        res.json({
-            status: true,
-            creator: "@Imalsha",
-            site: "cinesubz",
-            url: movieUrl,
-            data: {
-                title: scannedData.title,
-                image: scannedData.image,
-                quality: scannedData.quality,
-                rating: scannedData.rating,
-                imdb: scannedData.rating + " (N/A)",
-                director: scannedData.director,
-                language: "ENGLISH",
-                genres: ["Action", "Adventure", "English", "Sinhala Subtitles"],
-                story: scannedData.story,
-                cast: [],
-                gallery: [],
-                trailer: "https://www.youtube.com/@cinesubz",
-                year,
-                duration: "N/A",
-                tag: "English",
-                directors: scannedData.director,
-                stars: "N/A",
-                country: "Sri Lanka / Global",
-                downloads
-            }
-        });
+        res.json(apiData);
 
     } catch (err) {
-        console.error(`❌ [CRITICAL ERROR]: ${err.message}`);
-        if (browser) await browser.close();
-        res.status(500).json({ status: false, error: err.message });
+        console.error(`❌ [PROXY ERROR]: ${err.message}`);
+        res.status(500).json({ status: false, error: "Failed to fetch download links: " + err.message });
     }
 });
 
-app.listen(PORT, () => console.log(`Cinesubz Flexible Scanner API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Cinesubz Proxy API running on port ${PORT}`));
