@@ -16,40 +16,42 @@ const HEADERS = {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ WP API TESTER is Live 🚀",
+        message: "IMALSHA CINESUBZ WP MOVIE TESTER is Live 🚀",
         endpoints: {
-            test_wp: "/api/v1/cinesubz/test-wp",
-            latest: "/api/v1/cinesubz/latest?page=1",
-            search: "/api/v1/cinesubz/search?q=movie_name"
+            test_movie: "/api/v1/cinesubz/test-movie-wp",
+            test_wp: "/api/v1/cinesubz/test-wp"
         }
     });
 });
 
-// WordPress REST API Test Endpoint
-app.get('/api/v1/cinesubz/test-wp', async (req, res) => {
+// WordPress Specific Movie Post Test Endpoint
+app.get('/api/v1/cinesubz/test-movie-wp', async (req, res) => {
     try {
-        console.log(`\n🔍 [WP-JSON TEST] Fetching WordPress REST API...`);
+        console.log(`\n🔍 [WP MOVIE TEST] Fetching specific Spider-Man movie via WP REST API...`);
         
-        // Fetching WordPress posts JSON directly from Cinesubz
-        const wpApiUrl = "https://cinesubz.net/wp-json/wp/v2/posts?per_page=5";
+        // Slug extracted directly from the movie URL
+        const slug = "spider-man-brand-new-day-2026-sinhala-subtitles";
+        const wpApiUrl = `https://cinesubz.net/wp-json/wp/v2/posts?slug=${slug}`;
+        
         const response = await axios.get(wpApiUrl, {
             headers: HEADERS,
             timeout: 15000
         });
 
-        console.log(`🎉 Successfully fetched WP REST API data! Posts count: ${response.data.length}`);
+        console.log(`🎉 WP Movie API Response received! Posts found: ${response.data.length}`);
 
         res.json({
             status: true,
             creator: "@Imalsha",
-            posts_count: response.data.length,
-            sample_post: response.data[0] || null
+            slug_tested: slug,
+            found: response.data.length > 0,
+            movie_data: response.data[0] || null
         });
 
     } catch (err) {
-        console.error(`❌ [WP TEST ERROR]: ${err.message}`);
+        console.error(`❌ [WP MOVIE TEST ERROR]: ${err.message}`);
         res.status(500).json({ status: false, error: err.message });
     }
 });
 
-app.listen(PORT, () => console.log(`Cinesubz WP Test API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Cinesubz WP Movie Test API running on port ${PORT}`));
