@@ -125,35 +125,24 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Robust Info & Download Endpoint with Extended Timeouts
+// 3. Fixed Info & Download Endpoint (Accurate Wrapper Path Scraping)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔍 [ROBUST DL API] Processing Movie URL: ${movieUrl}`);
+    console.log(`🔍 [FIXED DL API] Processing Movie URL: ${movieUrl}`);
 
     let browser;
     try {
         browser = await getBrowser();
         const page = await browser.newPage();
 
-        // Block unnecessary assets for speed
-        await page.setRequestInterception(true);
-        page.on('request', (req) => {
-            if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) {
-                req.abort();
-            } else {
-                req.continue();
-            }
-        });
-
         await page.setUserAgent(HEADERS['User-Agent']);
         await page.setViewport({ width: 1280, height: 800 });
 
-        // Increased timeout to 60 seconds for main movie page
-        await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-        await new Promise(r => setTimeout(r, 1000));
+        await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+        await new Promise(r => setTimeout(r, 1500));
 
         const pageData = await page.evaluate(() => {
             const title = document.querySelector('meta[property="og:title"]')?.content || document.querySelector('h1')?.innerText || 'Unknown';
@@ -170,17 +159,18 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 }
             });
 
+            // Target actual download wrapper links (zt-links, csplayer, space, download buttons)
             const initialLinks = [];
             document.querySelectorAll('a').forEach(a => {
                 const href = a.href || '';
-                const txt = (a.innerText || '') + ' ' + (a.parentElement ? a.parentElement.innerText : '');
                 const hLower = href.toLowerCase();
+                const txt = a.innerText || '';
 
-                if (hLower.includes('javascript:') || hLower.includes('#') || hLower.includes('.jpg') || hLower.includes('facebook.com') || hLower.includes('account')) return;
-
-                if (href && (hLower.includes('zt-links') || hLower.includes('download') || hLower.includes('space') || hLower.includes('kdrive') || hLower.includes('csplayer') || hLower.includes('pixeldrain') || hLower.includes('/api-') || txt.toLowerCase().includes('download'))) {
-                    if (!initialLinks.some(d => d.url === href)) {
-                        initialLinks.push({ url: href, text: txt });
+                if (hLower.includes('zt-links') || hLower.includes('csplayer') || hLower.includes('space') || hLower.includes('download') || txt.toLowerCase().includes('download')) {
+                    if (!hLower.includes('facebook.com') && !hLower.includes('instagram') && !hLower.includes('#') && !hLower.includes('javascript:')) {
+                        if (!initialLinks.some(d => d.url === href)) {
+                            initialLinks.push({ url: href, text: txt + ' ' + (a.parentElement?.innerText || '') });
+                        }
                     }
                 }
             });
@@ -189,7 +179,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         });
 
         console.log(`🎬 Title: ${pageData.title}`);
-        console.log(`🔗 Found ${pageData.initialLinks.length} wrapper link(s). Processing safely...`);
+        console.log(`🔗 Found ${pageData.initialLinks.length} wrapper link(s).`);
 
         let year = "2026";
         const yearMatch = pageData.title.match(/(\d{4})/);
@@ -197,75 +187,78 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         const downloads = [];
 
+        // Loop through wrapper links and extract true final destination URLs
         for (let i = 0; i < pageData.initialLinks.length; i++) {
             const item = pageData.initialLinks[i];
             let subPage;
             try {
                 subPage = await browser.newPage();
-                
-                await subPage.setRequestInterception(true);
-                subPage.on('request', (req) => {
-                    if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) {
-                        req.abort();
-                    } else {
-                        req.continue();
-                    }
-                });
-
                 await subPage.setUserAgent(HEADERS['User-Agent']);
                 
-                // 30 seconds timeout for each wrapper link
-                await subPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+                await subPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => {});
                 
-                await new Promise(r => setTimeout(r, 1000));
+                // Wait for timer and click "Go to Download Page" button automatically
+                await new Promise(r => setTimeout(r, 2500));
+                
                 await subPage.evaluate(() => {
                     document.querySelectorAll('a, button').forEach(el => {
-                        const txt = (el.innerText || '').toLowerCase();
-                        if (txt.includes('download page') || txt.includes('go to') || txt.includes('click here')) {
+                        const t = (el.innerText || '').toLowerCase();
+                        if (t.includes('download page') || t.includes('go to') || t.includes('click here') || t.includes('continue')) {
                             el.click();
                         }
                     });
                 }).catch(() => {});
 
-                await subPage.waitForFunction(() => {
-                    const bodyText = document.body.innerText;
-                    return bodyText.includes('Direct Download') || bodyText.includes('Telegram Download');
-                }, { timeout: 12000 }).catch(() => {});
+                await new Promise(r => setTimeout(r, 2500));
 
-                const extractedLinks = await subPage.evaluate(() => {
-                    const results = [];
-                    document.querySelectorAll('a, button').forEach(btn => {
-                        const txt = btn.innerText || '';
-                        const href = btn.href || '';
-                        if (txt.toLowerCase().includes('direct download') || txt.toLowerCase().includes('telegram') || href.includes('pixeldrain') || href.includes('t.me')) {
-                            results.push({ text: txt, href: href });
+                // Extract actual file hosting/telegram links from the target page
+                const finalLinks = await subPage.evaluate(() => {
+                    const links = [];
+                    document.querySelectorAll('a').forEach(a => {
+                        const href = a.href || '';
+                        const txt = a.innerText || '';
+                        const hLower = href.toLowerCase();
+
+                        if (
+                            hLower.includes('pixeldrain.com') ||
+                            hLower.includes('supercloud') ||
+                            hLower.includes('t.me/') ||
+                            hLower.includes('telegram.me') ||
+                            hLower.includes('drive') ||
+                            hLower.includes('kdrive') ||
+                            hLower.endsWith('.mp4') ||
+                            hLower.endsWith('.mkv') ||
+                            txt.toLowerCase().includes('direct download') ||
+                            txt.toLowerCase().includes('telegram download')
+                        ) {
+                            links.push({ href, text: txt });
                         }
                     });
-                    return results;
+                    return links;
                 });
 
                 await subPage.close();
 
-                for (const btnInfo of extractedLinks) {
-                    let targetUrl = btnInfo.href;
-                    let linkText = btnInfo.text.toLowerCase();
+                for (const fl of finalLinks) {
+                    let targetUrl = fl.href;
+                    if (!targetUrl || targetUrl.includes('#') || targetUrl.includes('javascript:') || targetUrl.includes('CineSubzAdmin')) continue;
 
-                    if (!targetUrl || targetUrl.includes('#') || targetUrl.includes('javascript:')) continue;
+                    let type = "Direct Server";
+                    if (targetUrl.includes('pixeldrain')) type = "PixelDrain";
+                    else if (targetUrl.includes('t.me/') || targetUrl.includes('telegram.me')) type = "Telegram Bot";
+                    else if (targetUrl.includes('supercloud')) type = "Direct High-Speed Server";
 
                     const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|WEBRip|HDRip)/i);
                     const qualityName = qMatch ? qMatch[0].toUpperCase() : "WEB-DL";
                     const sMatch = item.text.match(/(\d+(\.\d+)?\s*(GB|MB))/i);
                     const size = sMatch ? sMatch[0] : "N/A";
 
-                    let type = "Direct Server";
-                    if (targetUrl.includes('pixeldrain')) type = "PixelDrain";
-                    else if (targetUrl.includes('t.me/')) type = "Telegram Bot";
-
-                    const qualityLabel = qualityName + " [" + type + "]";
+                    const qualityLabel = `${qualityName} [${type}]`;
                     if (!downloads.some(d => d.link === targetUrl)) {
                         downloads.push({ quality: qualityLabel, size, language: "English", link: targetUrl });
                     }
                 }
+
             } catch (subErr) {
                 if (subPage) await subPage.close();
             }
@@ -305,7 +298,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         });
 
     } catch (err) {
-        console.error(`❌ [CRITICAL INFODL ERROR]: ${err.message}`);
+        console.error(`❌ [CRITICAL ERROR]: ${err.message}`);
         if (browser) await browser.close();
         res.status(500).json({ status: false, error: err.message });
     }
