@@ -16,70 +16,60 @@ const HEADERS = {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ DIRECT URL EXTRACTOR is Live 🚀",
+        message: "IMALSHA CINESUBZ HTML SCRAPER API is Live 🚀",
         endpoint: "/api/v1/cinesubz/extract?url=movie_page_url"
     });
 });
 
-// Direct URL & Post ID Extractor
+// Direct HTML Scraper & Link Extractor
 app.get('/api/v1/cinesubz/extract', async (req, res) => {
     try {
         const movieUrl = req.query.url || "https://cinesubz.net/movies/spider-man-brand-new-day-2026-sinhala-subtitles/";
-        console.log(`\n🔍 [DIRECT EXTRACT] Fetching page: ${movieUrl}`);
+        console.log(`\n🔍 [HTML SCRAPER] Scraping movie page: ${movieUrl}`);
         
-        // 1. Fetch movie page HTML using Axios & Cheerio to find WordPress Post ID
         const htmlRes = await axios.get(movieUrl, { headers: HEADERS, timeout: 15000 });
         const $ = cheerio.load(htmlRes.data);
         
-        // Zetaflix/WordPress themes usually put post id in body classes like 'postid-XXXX' or article classes
-        let postId = null;
-        const bodyClass = $('body').attr('class') || '';
-        const match = bodyClass.match(/postid-(\d+)/);
+        // Extract movie details
+        const title = $('h1.entry-title, h1.title, .s-item-title h1').text().trim() || $('title').text();
+        const poster = $('img.attachment-post-thumbnail, .poster img, .s-item-cover img').attr('src') || '';
         
-        if (match && match[1]) {
-            postId = match[1];
-        } else {
-            // Fallback: check alternate meta or link tags for post id
-            const shortlink = $('link[rel="shortlink"]').attr('href') || '';
-            const pMatch = shortlink.match(/\?p=(\d+)/);
-            if (pMatch && pMatch[1]) postId = pMatch[1];
-        }
-        
-        console.log(`🎯 Extracted Post ID: ${postId || 'Not Found'}`);
-        
-        if (!postId) {
-            return res.json({ status: false, message: "Could not extract WordPress Post ID from the given URL" });
-        }
-        
-        // 2. Fetch Zeta Player API using the extracted Post ID
-        const playerApiUrl = `https://cinesubz.net/wp-json/zetaplayer/v2/movie/${postId}`;
-        let playerData = null;
-        
-        try {
-            const playerRes = await axios.get(playerApiUrl, { headers: HEADERS, timeout: 10000 });
-            playerData = playerRes.data;
-        } catch (e) {
-            console.log(`⚠️ Player API with 'movie' failed, trying 'post'...`);
-            try {
-                const altRes = await axios.get(`https://cinesubz.net/wp-json/zetaplayer/v2/post/${postId}`, { headers: HEADERS, timeout: 10000 });
-                playerData = altRes.data;
-            } catch (err2) {
-                playerData = { error: err2.message };
+        // Extract download links / buttons / server links
+        let downloadLinks = [];
+        $('a.button, a.link-btn, .download-links a, .s-dist-btn, .links_table a, .m-movies-links a').each((i, el) => {
+            const text = $(el).text().trim();
+            const href = $(el).attr('href');
+            if (href && !href.includes('#')) {
+                downloadLinks.push({ text, href });
             }
+        });
+
+        // Fallback: search for any external download or pixeldrain/mega links in the body
+        if (downloadLinks.length === 0) {
+            $('a').each((i, el) => {
+                const href = $(el).attr('href');
+                if (href && (href.includes('pixeldrain') || href.includes('megaup') || href.includes('drive.google') || href.includes('1drv.ms'))) {
+                    downloadLinks.push({ text: $(el).text().trim() || 'Download Link', href });
+                }
+            });
         }
-        
+
+        console.log(`🎉 Extracted ${downloadLinks.length} download links successfully!`);
+
         res.json({
             status: true,
             creator: "@Imalsha",
             movie_url: movieUrl,
-            post_id: postId,
-            player_links: playerData
+            title: title,
+            poster: poster,
+            links_count: downloadLinks.length,
+            download_links: downloadLinks
         });
 
     } catch (err) {
-        console.error(`❌ [EXTRACT ERROR]: ${err.message}`);
+        console.error(`❌ [SCRAPER ERROR]: ${err.message}`);
         res.status(500).json({ status: false, error: err.message });
     }
 });
 
-app.listen(PORT, () => console.log(`Direct Extractor API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`HTML Scraper API running on port ${PORT}`));
