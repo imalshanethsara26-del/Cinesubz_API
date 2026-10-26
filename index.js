@@ -8,44 +8,45 @@ const PORT = process.env.PORT || 8080;
 app.use(cors());
 
 const HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Referer': 'https://cinesubz.net/'
 };
 
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ WP DISCOVERY API is Live 🚀",
-        endpoint: "/api/v1/cinesubz/wp-index"
+        message: "IMALSHA ZETAFLIX API TESTER is Live 🚀",
+        endpoint: "/api/v1/cinesubz/test-player?id=96894"
     });
 });
 
-// WordPress REST API Root Discovery Endpoint
-app.get('/api/v1/cinesubz/wp-index', async (req, res) => {
+// Test Zeta Player / Source Endpoint
+app.get('/api/v1/cinesubz/test-player', async (req, res) => {
     try {
-        console.log(`\n🔍 [WP DISCOVERY] Fetching WordPress Root API Index...`);
+        const movieId = req.query.id || "96894"; // Let's test with a post/movie ID
+        console.log(`\n🔍 [ZETA PLAYER TEST] Testing player endpoint for ID: ${movieId}`);
         
-        // Fetching the main wp-json index which lists all available routes
-        const wpIndexUrl = `https://cinesubz.net/wp-json/`;
+        // Zetaflix / zetaplayer endpoint pattern from discovery
+        const playerApiUrl = `https://cinesubz.net/wp-json/zetaplayer/v2/movie/${movieId}`;
         
-        const response = await axios.get(wpIndexUrl, {
+        const response = await axios.get(playerApiUrl, {
             headers: HEADERS,
             timeout: 15000
         });
 
-        console.log(`🎉 WP Index fetched successfully!`);
+        console.log(`🎉 Zeta Player API Response received!`);
 
         res.json({
             status: true,
             creator: "@Imalsha",
-            site_name: response.data.name || "Cinesubz",
-            namespaces: response.data.namespaces || [],
-            routes: Object.keys(response.data.routes || {}) // Listing all available API paths
+            movie_id: movieId,
+            player_data: response.data
         });
 
     } catch (err) {
-        console.error(`❌ [WP INDEX ERROR]: ${err.message}`);
-        res.status(500).json({ status: false, error: err.message });
+        console.error(`❌ [ZETA PLAYER ERROR]: ${err.message}`);
+        res.status(500).json({ status: false, error: err.response?.data || err.message });
     }
 });
 
-app.listen(PORT, () => console.log(`WP Discovery API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Zetaflix Player API running on port ${PORT}`));
