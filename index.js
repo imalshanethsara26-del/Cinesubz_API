@@ -1,6 +1,5 @@
 const express = require('express');
-const axios = require('axios');
-const cheerio = require('cheerio');
+const puppeteer = require('puppeteer');
 const cors = require('cors');
 
 const app = express();
@@ -8,16 +7,10 @@ const PORT = process.env.PORT || 8080;
 
 app.use(cors());
 
-const HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Referer': 'https://cinesubz.net/',
-    'Accept-Language': 'en-US,en;q=0.9'
-};
-
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ REDIRECT RESOLVER API is Live 🚀",
+        message: "IMALSHA CINESUBZ NATIVE PUPPETEER API is Live 🚀",
         endpoint: "/api/v1/cinesubz/extract?url=movie_page_url"
     });
 });
@@ -25,73 +18,126 @@ app.get('/', (req, res) => {
 app.get('/api/v1/cinesubz/extract', async (req, res) => {
     const movieUrl = req.query.url || "https://cinesubz.net/movies/spider-man-brand-new-day-2026-sinhala-subtitles/";
     
-    console.log(`\n🔥 [DEEP RESOLVER] Processing Movie URL: ${movieUrl}`);
+    console.log(`\n==============================================`);
+    console.log(`🚀 [NATIVE PUPPETEER] Processing: ${movieUrl}`);
+    console.log(`==============================================`);
+
+    let browser = null;
 
     try {
-        // 1. Fetch main movie page
-        const htmlRes = await axios.get(movieUrl, { headers: HEADERS, timeout: 20000 });
-        const $ = cheerio.load(htmlRes.data);
-        
-        const title = $('h1').first().text().trim() || $('title').text();
-        let intermediateLinks = [];
-
-        // 2. Find all download links/buttons that point to the api or redirect pages
-        $('a').each((i, el) => {
-            const href = $(el).attr('href');
-            const text = $(el).text().trim();
-            if (href && (href.includes('/api/') || href.includes('csplayer') || href.includes('download') || href.includes('watch'))) {
-                if (!intermediateLinks.includes(href) && !href.startsWith('#')) {
-                    intermediateLinks.push(href);
-                }
-            }
+        // 1. Launch Headless Browser (Optimized for Render environment)
+        browser = await puppeteer.launch({
+            headless: true,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--no-first-run',
+                '--no-zygote',
+                '--single-process',
+                '--disable-gpu'
+            ]
         });
 
-        console.log(`🔍 Found ${intermediateLinks.length} intermediate/redirect links.`);
+        const page = await browser.newPage();
+        
+        // Set realistic User-Agent & Viewport
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+        await page.setViewport({ width: 1280, height: 800 });
 
-        let finalDownloadLinks = [];
+        console.log(`🌐 Navigating to movie page...`);
+        await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-        // 3. Resolve each intermediate link to find final direct/telegram links
-        for (const link of intermediateLinks) {
-            try {
-                console.log(`🌐 Resolving redirect page: ${link}`);
-                const pageRes = await axios.get(link, { headers: HEADERS, timeout: 10000 });
-                const $page = cheerio.load(pageRes.data);
+        // Extract Movie Title
+        const title = await page.evaluate(() => {
+            const h1 = document.querySelector('h1.entry-title, h1.title, h1');
+            return h1 ? h1.innerText.trim() : document.title;
+        });
 
-                // Scrape final download buttons on the redirected page (e.g. csplayer page)
-                $page('a').each((j, subEl) => {
-                    const subHref = $page(subEl).attr('href');
-                    const subText = $page(subEl).text().trim();
-                    
-                    if (subHref && (subHref.includes('pixeldrain') || subHref.includes('megaup') || subHref.includes('drive.google') || subHref.includes('1drv.ms') || subHref.includes('terabox') || subHref.includes('t.me') || subHref.includes('download'))) {
-                        if (!finalDownloadLinks.some(f => f.href === subHref)) {
-                            finalDownloadLinks.push({
-                                source_page: link,
-                                text: subText || 'Direct Download',
-                                href: subHref
-                            });
+        console.log(`🎯 Movie Title: "${title}"`);
+
+        // 2. Find the download trigger link (e.g. api redirect link)
+        console.log(`🔍 Searching for download trigger links...`);
+        const downloadTriggerUrl = await page.evaluate(() => {
+            const btn = document.querySelector('a.button, a.link-btn, .download-links a, a[href*="/api/"], a[href*="csplayer"]');
+            return btn ? btn.href : null;
+        });
+
+        let downloadLinks = [];
+
+        if (downloadTriggerUrl) {
+            console.log(`🔗 Found trigger link: ${downloadTriggerUrl}`);
+            console.log(`⏳ Navigating to redirect/timer page and waiting for countdown...`);
+            
+            // Go to the redirect page
+            await page.goto(downloadTriggerUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+            // Wait for 5 seconds to let the timer run and the final player page (csplayer2.space) to load
+            await new Promise(r => setTimeout(r, 5000));
+
+            // Scrape final download links from the resolved page
+            downloadLinks = await page.evaluate(() => {
+                const links = [];
+                document.querySelectorAll('a').forEach(a => {
+                    const href = a.href;
+                    const text = a.innerText.trim();
+                    if (href && !href.startsWith('#')) {
+                        const isFileHost = 
+                            href.includes('pixeldrain') || 
+                            href.includes('megaup') || 
+                            href.includes('drive.google') || 
+                            href.includes('1drv.ms') || 
+                            href.includes('terabox') ||
+                            href.includes('t.me/') ||
+                            href.includes('download');
+
+                        if (isFileHost) {
+                            if (!links.some(l => l.href === href)) {
+                                links.push({ text: text || 'Download Link', href });
+                            }
                         }
                     }
                 });
-            } catch (errRedirect) {
-                console.log(`⚠️ Failed to resolve link ${link}: ${errRedirect.message}`);
-            }
+                return links;
+            });
+        } else {
+            console.log(`⚠️ Trigger link not found directly, scanning current page...`);
+            downloadLinks = await page.evaluate(() => {
+                const links = [];
+                document.querySelectorAll('a').forEach(a => {
+                    const href = a.href;
+                    const text = a.innerText.trim();
+                    if (href && !href.startsWith('#')) {
+                        if (href.includes('pixeldrain') || href.includes('megaup') || href.includes('drive.google') || href.includes('terabox') || href.includes('t.me/')) {
+                            if (!links.some(l => l.href === href)) {
+                                links.push({ text: text || 'Download Link', href });
+                            }
+                        }
+                    }
+                });
+                return links;
+            });
         }
 
-        console.log(`🎯 Successfully resolved ${finalDownloadLinks.length} final download links!`);
+        await browser.close();
+        console.log(`🎉 Successfully extracted ${downloadLinks.length} actual download links!`);
+        console.log(`==============================================\n`);
 
         res.json({
             status: true,
             creator: "@Imalsha",
             movie_url: movieUrl,
             title: title,
-            links_count: finalDownloadLinks.length,
-            links: finalDownloadLinks
+            links_count: downloadLinks.length,
+            links: downloadLinks
         });
 
     } catch (err) {
-        console.error(`❌ [ERROR]: ${err.message}`);
+        if (browser) await browser.close();
+        console.error(`❌ [PUPPETEER ERROR]: ${err.message}`);
         res.status(500).json({ status: false, error: err.message });
     }
 });
 
-app.listen(PORT, () => console.log(`Redirect Resolver API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Native Puppeteer API running on port ${PORT}`));
