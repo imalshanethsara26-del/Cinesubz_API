@@ -31,7 +31,7 @@ async function getBrowser() {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ CLICK-THROUGH DL API is Live 🚀",
+        message: "IMALSHA CINESUBZ DEBUG TRACE API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -131,13 +131,13 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Ultimate Click-Through Info & Download Endpoint
+// 3. Debug Trace Info & Download Endpoint (Full Network Logging)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔍 [CLICK-THROUGH API] Processing Movie URL: ${movieUrl}`);
+    console.log(`🔍 [DEBUG TRACE API] Processing Movie URL: ${movieUrl}`);
 
     let browser;
     try {
@@ -178,7 +178,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         });
 
         console.log(`🎬 Title: ${pageData.title}`);
-        console.log(`🔗 Found ${pageData.initialLinks.length} wrapper link(s). Simulating clicks...`);
+        console.log(`🔗 Found ${pageData.initialLinks.length} wrapper link(s). Starting network trace...`);
 
         let year = "2026";
         const yearMatch = pageData.title.match(/(\d{4})/);
@@ -193,34 +193,43 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 subPage = await browser.newPage();
                 await subPage.setUserAgent(HEADERS['User-Agent']);
 
-                // Intercept network requests and navigations inside wrapper page
-                subPage.on('response', response => {
-                    try {
-                        const u = response.url();
-                        if (u.includes('pixeldrain') || u.includes('supercloud') || u.includes('t.me') || u.includes('drive7') || u.includes('ext=')) {
-                            capturedUrls.add(u);
-                        }
-                    } catch (e) {}
+                // 🕵️‍♂️ FULL NETWORK TRACE LOGGING
+                subPage.on('request', req => {
+                    console.log(`🌐 [OUTGOING REQ]: ${req.url()}`);
                 });
 
-                subPage.on('framenavigated', frame => {
-                    if (frame === subPage.mainFrame()) {
-                        const u = frame.url();
-                        if (!u.includes('csplayer2.space')) {
-                            capturedUrls.add(u);
-                        }
+                subPage.on('response', async res => {
+                    const resUrl = res.url();
+                    const ct = res.headers()['content-type'] || '';
+                    console.log(`📥 [INCOMING RES]: ${resUrl} [Type: ${ct}]`);
+                    
+                    // Capture any URL found in responses
+                    capturedUrls.add(resUrl);
+
+                    if (ct.includes('json') || resUrl.includes('api') || resUrl.includes('get') || resUrl.includes('file')) {
+                        try {
+                            const json = await res.json();
+                            console.log(`📦 [JSON BODY from ${resUrl}]:`, JSON.stringify(json, null, 2));
+                            
+                            // Extract any URL strings inside JSON
+                            JSON.stringify(json, (k, v) => {
+                                if (typeof v === 'string' && v.startsWith('http')) {
+                                    capturedUrls.add(v);
+                                }
+                                return v;
+                            });
+                        } catch (e) {}
                     }
                 });
 
                 await subPage.goto(wrap.url, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
                 
-                // Wait for "Preparing Your Download" loader to finish
+                // Wait for loader
                 await new Promise(r => setTimeout(r, 4500));
 
-                // 🖱️ Automatically Click the "Direct Download" or "Telegram" buttons!
+                // Click buttons to trigger hidden requests
                 await subPage.evaluate(() => {
-                    const elements = Array.from(document.querySelectorAll('a, button'));
-                    elements.forEach(el => {
+                    document.querySelectorAll('a, button').forEach(el => {
                         const txt = (el.innerText || '').toLowerCase();
                         if (txt.includes('direct download') || txt.includes('telegram')) {
                             el.click();
@@ -228,18 +237,18 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     });
                 });
 
-                // Wait for click action and redirection/fetch to complete
-                await new Promise(r => setTimeout(r, 3500));
+                await new Promise(r => setTimeout(r, 3000));
 
-                // Grab any remaining hrefs from DOM after click
-                const postClickHrefs = await subPage.evaluate(() => {
+                // Grab all DOM hrefs
+                const domHrefs = await subPage.evaluate(() => {
                     const arr = [];
-                    document.querySelectorAll('a').forEach(a => {
-                        if (a.href) arr.push(a.href);
+                    document.querySelectorAll('a, [data-href], [data-url]').forEach(el => {
+                        const h = el.href || el.getAttribute('data-href') || el.getAttribute('data-url');
+                        if (h) arr.push(h);
                     });
                     return arr;
                 });
-                postClickHrefs.forEach(h => capturedUrls.add(h));
+                domHrefs.forEach(h => capturedUrls.add(h));
 
                 await subPage.close();
 
@@ -248,7 +257,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         }
 
-        // 🎯 STRICT FILTERING for real downloadable files
+        // Filter and categorize captured URLs
         for (let targetUrl of capturedUrls) {
             let hLower = targetUrl.toLowerCase();
             targetUrl = targetUrl.replace(/['"<>)]+$/, '');
@@ -276,7 +285,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         await browser.close();
 
-        console.log(`🎉 Total Valid Click-Through Download Links: ${downloads.length}`);
+        console.log(`🎉 Total Traced Download Links: ${downloads.length}`);
         console.log(`==============================================\n`);
 
         res.json({
@@ -314,4 +323,4 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Cinesubz Click-Through DL API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Cinesubz Debug Trace API running on port ${PORT}`));
