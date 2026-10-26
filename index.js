@@ -43,7 +43,7 @@ app.get('/api/v1/cinesubz/extract', async (req, res) => {
         const $ = cheerio.load(htmlRes.data);
 
         movieTitle = $('h1.entry-title, h1.title, .s-item-title h1').text().trim() || $('title').text();
-        moviePoster = $('img.attachment-post-thumbnail, .poster img, .s-item-cover img').attr('src'] || '';
+        moviePoster = $('img.attachment-post-thumbnail, .poster img, .s-item-cover img').attr('src') || '';
 
         // Extracting Post ID from body class or shortlink
         const bodyClass = $('body').attr('class') || '';
