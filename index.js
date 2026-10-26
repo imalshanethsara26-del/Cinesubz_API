@@ -31,7 +31,7 @@ async function getBrowser() {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ DEBUG TRACE API is Live 🚀",
+        message: "IMALSHA CINESUBZ DEEP SCRIPT SCANNER API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -131,13 +131,13 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Debug Trace Info & Download Endpoint (Full Network Logging)
+// 3. Deep Script Scanner Info & Download Endpoint
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔍 [DEBUG TRACE API] Processing Movie URL: ${movieUrl}`);
+    console.log(`🔍 [DEEP SCRIPT SCANNER] Processing Movie URL: ${movieUrl}`);
 
     let browser;
     try {
@@ -148,9 +148,10 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         await page.setViewport({ width: 1280, height: 800 });
 
         await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
-        await new Promise(r => setTimeout(r, 1500));
+        await new Promise(r => setTimeout(r, 2000));
 
-        const pageData = await page.evaluate(() => {
+        // Extract metadata and scan ALL script contents & DOM for hidden file links
+        const scannedData = await page.evaluate(() => {
             const title = document.querySelector('meta[property="og:title"]')?.content || document.querySelector('h1')?.innerText || 'Unknown';
             const image = document.querySelector('meta[property="og:image"]')?.content || '';
             const quality = document.querySelector('.quality')?.innerText || 'WEB-DL';
@@ -165,102 +166,55 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 }
             });
 
-            const initialLinks = [];
-            document.querySelectorAll('a').forEach(a => {
-                const href = a.href || '';
-                const hLower = href.toLowerCase();
-                if (hLower.includes('csplayer') || hLower.includes('zt-links') || hLower.includes('space')) {
-                    initialLinks.push({ url: href, text: a.innerText + ' ' + (a.parentElement?.innerText || '') });
+            const allFoundUrls = new Set();
+
+            // 1. Scan all <a>, <button> elements and data attributes
+            document.querySelectorAll('a, button, [data-href], [data-url], [data-link]').forEach(el => {
+                const href = el.href || el.getAttribute('data-href') || el.getAttribute('data-url') || el.getAttribute('data-link') || '';
+                if (href) allFoundUrls.add(href);
+            });
+
+            // 2. Scan ALL Script tags for embedded URLs or JSON data
+            document.querySelectorAll('script').forEach(sc => {
+                const content = sc.textContent || sc.innerHTML || '';
+                const matches = content.match(/https?:\/\/[^\s"'<>]+/gi);
+                if (matches) {
+                    matches.forEach(m => allFoundUrls.add(m));
                 }
             });
 
-            return { title, image, quality, rating, director, story: story || 'No description available', initialLinks };
+            // 3. Scan entire page HTML body
+            const bodyMatches = document.body.innerHTML.match(/https?:\/\/[^\s"'<>]+/gi) || [];
+            bodyMatches.forEach(m => allFoundUrls.add(m));
+
+            return { title, image, quality, rating, director, story: story || 'No description available', urls: Array.from(allFoundUrls) };
         });
 
-        console.log(`🎬 Title: ${pageData.title}`);
-        console.log(`🔗 Found ${pageData.initialLinks.length} wrapper link(s). Starting network trace...`);
+        await browser.close();
+
+        console.log(`🎬 Title: ${scaredData = scannedData.title}`);
+        console.log(`🔗 Total raw URLs found via deep scan: ${scannedData.urls.length}`);
 
         let year = "2026";
-        const yearMatch = pageData.title.match(/(\d{4})/);
+        const yearMatch = scannedData.title.match(/(\d{4})/);
         if (yearMatch) year = yearMatch[1];
 
         const downloads = [];
-        const capturedUrls = new Set();
 
-        for (const wrap of pageData.initialLinks) {
-            let subPage;
-            try {
-                subPage = await browser.newPage();
-                await subPage.setUserAgent(HEADERS['User-Agent']);
-
-                // 🕵️‍♂️ FULL NETWORK TRACE LOGGING
-                subPage.on('request', req => {
-                    console.log(`🌐 [OUTGOING REQ]: ${req.url()}`);
-                });
-
-                subPage.on('response', async res => {
-                    const resUrl = res.url();
-                    const ct = res.headers()['content-type'] || '';
-                    console.log(`📥 [INCOMING RES]: ${resUrl} [Type: ${ct}]`);
-                    
-                    // Capture any URL found in responses
-                    capturedUrls.add(resUrl);
-
-                    if (ct.includes('json') || resUrl.includes('api') || resUrl.includes('get') || resUrl.includes('file')) {
-                        try {
-                            const json = await res.json();
-                            console.log(`📦 [JSON BODY from ${resUrl}]:`, JSON.stringify(json, null, 2));
-                            
-                            // Extract any URL strings inside JSON
-                            JSON.stringify(json, (k, v) => {
-                                if (typeof v === 'string' && v.startsWith('http')) {
-                                    capturedUrls.add(v);
-                                }
-                                return v;
-                            });
-                        } catch (e) {}
-                    }
-                });
-
-                await subPage.goto(wrap.url, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-                
-                // Wait for loader
-                await new Promise(r => setTimeout(r, 4500));
-
-                // Click buttons to trigger hidden requests
-                await subPage.evaluate(() => {
-                    document.querySelectorAll('a, button').forEach(el => {
-                        const txt = (el.innerText || '').toLowerCase();
-                        if (txt.includes('direct download') || txt.includes('telegram')) {
-                            el.click();
-                        }
-                    });
-                });
-
-                await new Promise(r => setTimeout(r, 3000));
-
-                // Grab all DOM hrefs
-                const domHrefs = await subPage.evaluate(() => {
-                    const arr = [];
-                    document.querySelectorAll('a, [data-href], [data-url]').forEach(el => {
-                        const h = el.href || el.getAttribute('data-href') || el.getAttribute('data-url');
-                        if (h) arr.push(h);
-                    });
-                    return arr;
-                });
-                domHrefs.forEach(h => capturedUrls.add(h));
-
-                await subPage.close();
-
-            } catch (subErr) {
-                if (subPage) await subPage.close();
-            }
-        }
-
-        // Filter and categorize captured URLs
-        for (let targetUrl of capturedUrls) {
+        for (let targetUrl of scannedData.urls) {
             let hLower = targetUrl.toLowerCase();
             targetUrl = targetUrl.replace(/['"<>)]+$/, '');
+
+            if (
+                hLower.includes('facebook.com') ||
+                hLower.includes('instagram.com') ||
+                hLower.includes('cinesubzadmin') ||
+                hLower.includes('google.com') ||
+                hLower.includes('cloudflare') ||
+                hLower.includes('jquery') ||
+                hLower.includes('#') ||
+                hLower.includes('javascript:')
+            ) continue;
 
             const isPixelDrain = hLower.includes('pixeldrain.com/api/file/');
             const isSuperCloud = hLower.includes('supercloud') || hLower.includes('drive7.');
@@ -273,7 +227,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 else if (isTelegramBot) type = "Telegram Bot";
                 else if (isSuperCloud || isDirectFile) type = "Direct High-Speed Server";
 
-                const qMatch = targetUrl.match(/(2160p|4K|1080p|720p|480p)/i) || pageData.title.match(/(2160p|4K|1080p|720p|480p)/i) || ['WEB-DL'];
+                const qMatch = targetUrl.match(/(2160p|4K|1080p|720p|480p)/i) || scannedData.title.match(/(2160p|4K|1080p|720p|480p)/i) || ['WEB-DL'];
                 const qualityName = qMatch[0].toUpperCase();
 
                 const qualityLabel = `${qualityName} [${type}]`;
@@ -283,9 +237,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         }
 
-        await browser.close();
-
-        console.log(`🎉 Total Traced Download Links: ${downloads.length}`);
+        console.log(`🎉 Final Clean Extracted Links: ${downloads.length}`);
         console.log(`==============================================\n`);
 
         res.json({
@@ -294,22 +246,22 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             site: "cinesubz",
             url: movieUrl,
             data: {
-                title: pageData.title,
-                image: pageData.image,
-                quality: pageData.quality,
-                rating: pageData.rating,
-                imdb: pageData.rating + " (N/A)",
-                director: pageData.director,
+                title: scannedData.title,
+                image: scannedData.image,
+                quality: scannedData.quality,
+                rating: scannedData.rating,
+                imdb: scannedData.rating + " (N/A)",
+                director: scannedData.director,
                 language: "ENGLISH",
                 genres: ["Action", "Adventure", "English", "Sinhala Subtitles"],
-                story: pageData.story,
+                story: scannedData.story,
                 cast: [],
                 gallery: [],
                 trailer: "https://www.youtube.com/@cinesubz",
                 year,
                 duration: "N/A",
                 tag: "English",
-                directors: pageData.director,
+                directors: scannedData.director,
                 stars: "N/A",
                 country: "Sri Lanka / Global",
                 downloads
@@ -323,4 +275,4 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Cinesubz Debug Trace API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Cinesubz Deep Script Scanner API running on port ${PORT}`));
