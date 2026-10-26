@@ -125,13 +125,13 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Optimized Info & Download Endpoint (Sequential/Safe Processing to prevent Render Timeout)
+// 3. Robust Info & Download Endpoint with Extended Timeouts
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔍 [OPTIMIZED DL API] Processing Movie URL: ${movieUrl}`);
+    console.log(`🔍 [ROBUST DL API] Processing Movie URL: ${movieUrl}`);
 
     let browser;
     try {
@@ -151,8 +151,9 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         await page.setUserAgent(HEADERS['User-Agent']);
         await page.setViewport({ width: 1280, height: 800 });
 
-        await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
-        await new Promise(r => setTimeout(r, 600));
+        // Increased timeout to 60 seconds for main movie page
+        await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await new Promise(r => setTimeout(r, 1000));
 
         const pageData = await page.evaluate(() => {
             const title = document.querySelector('meta[property="og:title"]')?.content || document.querySelector('h1')?.innerText || 'Unknown';
@@ -196,7 +197,6 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         const downloads = [];
 
-        // Process links sequentially or in small controlled steps to protect Render RAM
         for (let i = 0; i < pageData.initialLinks.length; i++) {
             const item = pageData.initialLinks[i];
             let subPage;
@@ -214,9 +214,10 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
                 await subPage.setUserAgent(HEADERS['User-Agent']);
                 
-                await subPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 12000 }).catch(() => {});
+                // 30 seconds timeout for each wrapper link
+                await subPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
                 
-                await new Promise(r => setTimeout(r, 400));
+                await new Promise(r => setTimeout(r, 1000));
                 await subPage.evaluate(() => {
                     document.querySelectorAll('a, button').forEach(el => {
                         const txt = (el.innerText || '').toLowerCase();
@@ -229,7 +230,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 await subPage.waitForFunction(() => {
                     const bodyText = document.body.innerText;
                     return bodyText.includes('Direct Download') || bodyText.includes('Telegram Download');
-                }, { timeout: 6000 }).catch(() => {});
+                }, { timeout: 12000 }).catch(() => {});
 
                 const extractedLinks = await subPage.evaluate(() => {
                     const results = [];
