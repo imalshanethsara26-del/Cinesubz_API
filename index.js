@@ -40,7 +40,7 @@ app.get('/', (req, res) => {
     });
 });
 
-// 1. Latest Movies Endpoint (Fixed Poster Extraction)
+// 1. Latest Movies Endpoint
 app.get('/api/v1/cinesubz/latest', async (req, res) => {
     try {
         const pageNum = req.query.page || 1;
@@ -58,7 +58,6 @@ app.get('/api/v1/cinesubz/latest', async (req, res) => {
             if (!title) title = $(el).attr('title') || '';
             if (!title) title = $(el).text().trim();
 
-            // Robust image extraction for posters
             let img = $(el).find('img').attr('src') || $(el).find('img').attr('data-src') || $(el).find('img').attr('data-lazy-src');
             if (!img) {
                 img = parent.find('img').attr('src') || parent.find('img').attr('data-src') || parent.find('img').attr('data-lazy-src');
@@ -86,7 +85,7 @@ app.get('/api/v1/cinesubz/latest', async (req, res) => {
     }
 });
 
-// 2. Search Endpoint (Fixed Poster Extraction)
+// 2. Search Endpoint
 app.get('/api/v1/cinesubz/search', async (req, res) => {
     try {
         const query = req.query.q;
@@ -132,13 +131,13 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Deep Scraping inside csplayer2.space for hidden download links)
+// 3. Precision Info & Download Endpoint (Targeting Direct Download Button inside csplayer)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔍 [INFODL API] Processing Movie URL: ${movieUrl}`);
+    console.log(`🔍 [PRECISION DL API] Processing Movie URL: ${movieUrl}`);
 
     let browser;
     try {
@@ -166,7 +165,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 }
             });
 
-            // Grab all wrapper/player links pointing to csplayer, zt-links, or space
+            // Gather wrapper/player links pointing to csplayer, zt-links, or space
             const initialLinks = [];
             document.querySelectorAll('a').forEach(a => {
                 const href = a.href || '';
@@ -186,7 +185,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         });
 
         console.log(`🎬 Title: ${pageData.title}`);
-        console.log(`🔗 Found ${pageData.initialLinks.length} wrapper link(s). Deep scraping csplayer...`);
+        console.log(`🔗 Found ${pageData.initialLinks.length} wrapper link(s). Extracting direct buttons...`);
 
         let year = "2026";
         const yearMatch = pageData.title.match(/(\d{4})/);
@@ -201,67 +200,69 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 subPage = await browser.newPage();
                 await subPage.setUserAgent(HEADERS['User-Agent']);
                 
+                // Go directly to csplayer page
                 await subPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-                
-                // Wait for csplayer to render hidden buttons and file info
-                await new Promise(r => setTimeout(r, 3000));
+                await new Promise(r => setTimeout(r, 2500)); // Wait for elements to render
 
-                const scrapedData = await subPage.evaluate(() => {
+                // Precisely extract the File Size and the href of "Direct Download (New)" & "Telegram Download" buttons
+                const extractedBtnData = await subPage.evaluate(() => {
                     let fileSize = 'N/A';
                     const allText = document.body.innerText || '';
-                    
                     const matchSize = allText.match(/File Size:\s*([^\n]+)/i);
                     if (matchSize && matchSize[1]) {
                         fileSize = matchSize[1].trim();
                     }
 
-                    const links = [];
+                    let directDownloadUrl = '';
+                    let telegramUrl = '';
+
                     document.querySelectorAll('a, button').forEach(el => {
+                        const txt = (el.innerText || '').toLowerCase();
                         const href = el.href || el.getAttribute('data-href') || '';
-                        const txt = el.innerText || '';
-                        if (href && !href.includes('#') && !href.includes('javascript:')) {
-                            links.push({ href, text: txt });
+
+                        if (txt.includes('direct download') && href) {
+                            directDownloadUrl = href;
+                        }
+                        if (txt.includes('telegram') && href) {
+                            telegramUrl = href;
                         }
                     });
 
-                    return { fileSize, links };
+                    return { fileSize, directDownloadUrl, telegramUrl };
                 });
 
                 await subPage.close();
 
-                for (const lObj of scrapedData.links) {
-                    let targetUrl = lObj.href;
-                    let txt = (lObj.text || '').toLowerCase();
-                    let hLower = targetUrl.toLowerCase();
+                // Process Direct Download Link
+                if (extractedBtnData.directDownloadUrl && !extractedBtnData.directDownloadUrl.includes('#')) {
+                    const targetUrl = extractedBtnData.directDownloadUrl;
+                    let type = "Direct High-Speed Server";
+                    if (targetUrl.includes('pixeldrain')) type = "PixelDrain";
 
-                    // Filter out admin support links or irrelevant social pages
-                    if (hLower.includes('cinesubzadmin') || hLower.includes('facebook') || hLower.includes('instagram')) continue;
+                    const combinedText = item.text + ' ' + extractedBtnData.fileSize;
+                    const qMatch = combinedText.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|WEBRip|HDRip)/i);
+                    const qualityName = qMatch ? qMatch[0].toUpperCase() : "WEB-DL";
+                    const size = extractedBtnData.fileSize !== 'N/A' ? extractedBtnData.fileSize : 'N/A';
 
-                    if (
-                        hLower.includes('pixeldrain.com') ||
-                        hLower.includes('supercloud') ||
-                        hLower.includes('t.me/') ||
-                        hLower.includes('telegram.me') ||
-                        hLower.includes('drive.csplayer') ||
-                        hLower.includes('drive') ||
-                        hLower.includes('kdrive') ||
-                        txt.includes('direct download') ||
-                        txt.includes('telegram download')
-                    ) {
-                        let type = "Direct Server";
-                        if (hLower.includes('pixeldrain')) type = "PixelDrain";
-                        else if (hLower.includes('t.me/') || hLower.includes('telegram.me') || txt.includes('telegram')) type = "Telegram Bot";
-                        else if (hLower.includes('supercloud') || hLower.includes('drive.csplayer') || txt.includes('direct download')) type = "Direct High-Speed Server";
+                    const qualityLabel = `${qualityName} [${type}]`;
+                    if (!downloads.some(d => d.link === targetUrl)) {
+                        downloads.push({ quality: qualityLabel, size, language: "English", link: targetUrl });
+                    }
+                }
 
-                        const combinedText = item.text + ' ' + scrapedData.fileSize;
-                        const qMatch = combinedText.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|WEBRip|HDRip)/i);
-                        const qualityName = qMatch ? qMatch[0].toUpperCase() : "WEB-DL";
-                        const size = scrapedData.fileSize !== 'N/A' ? scrapedData.fileSize : 'N/A';
+                // Process Telegram Link
+                if (extractedBtnData.telegramUrl && !extractedBtnData.telegramUrl.includes('#') && !extractedBtnData.telegramUrl.includes('CineSubzAdmin')) {
+                    const targetUrl = extractedBtnData.telegramUrl;
+                    const type = "Telegram Bot";
 
-                        const qualityLabel = `${qualityName} [${type}]`;
-                        if (!downloads.some(d => d.link === targetUrl)) {
-                            downloads.push({ quality: qualityLabel, size, language: "English", link: targetUrl });
-                        }
+                    const combinedText = item.text + ' ' + extractedBtnData.fileSize;
+                    const qMatch = combinedText.match(/(2160p|4K|1080p|720p|480p|BluRay|WEB-DL|WEBRip|HDRip)/i);
+                    const qualityName = qMatch ? qMatch[0].toUpperCase() : "WEB-DL";
+                    const size = extractedBtnData.fileSize !== 'N/A' ? extractedBtnData.fileSize : 'N/A';
+
+                    const qualityLabel = `${qualityName} [${type}]`;
+                    if (!downloads.some(d => d.link === targetUrl)) {
+                        downloads.push({ quality: qualityLabel, size, language: "English", link: targetUrl });
                     }
                 }
 
