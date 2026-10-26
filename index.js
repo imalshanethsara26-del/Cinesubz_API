@@ -125,20 +125,20 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Ultra-Fast Info & Download Endpoint (Single Browser Instance + Block Unnecessary Assets)
+// 3. Optimized Info & Download Endpoint (Sequential/Safe Processing to prevent Render Timeout)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔍 [ULTRA FAST DL API] Processing Movie URL: ${movieUrl}`);
+    console.log(`🔍 [OPTIMIZED DL API] Processing Movie URL: ${movieUrl}`);
 
     let browser;
     try {
         browser = await getBrowser();
         const page = await browser.newPage();
 
-        // Block images, stylesheets, fonts, and media to make page load lightning fast
+        // Block unnecessary assets for speed
         await page.setRequestInterception(true);
         page.on('request', (req) => {
             if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) {
@@ -152,7 +152,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         await page.setViewport({ width: 1280, height: 800 });
 
         await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
-        await new Promise(r => setTimeout(r, 800));
+        await new Promise(r => setTimeout(r, 600));
 
         const pageData = await page.evaluate(() => {
             const title = document.querySelector('meta[property="og:title"]')?.content || document.querySelector('h1')?.innerText || 'Unknown';
@@ -188,19 +188,21 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         });
 
         console.log(`🎬 Title: ${pageData.title}`);
-        console.log(`🔗 Found ${pageData.initialLinks.length} wrapper link(s). Processing concurrently...`);
+        console.log(`🔗 Found ${pageData.initialLinks.length} wrapper link(s). Processing safely...`);
 
         let year = "2026";
         const yearMatch = pageData.title.match(/(\d{4})/);
         if (yearMatch) year = yearMatch[1];
 
-        // 🚀 Reuse the SAME browser instance and open tabs concurrently via Promise.all
-        const downloadPromises = pageData.initialLinks.map(async (item) => {
+        const downloads = [];
+
+        // Process links sequentially or in small controlled steps to protect Render RAM
+        for (let i = 0; i < pageData.initialLinks.length; i++) {
+            const item = pageData.initialLinks[i];
             let subPage;
             try {
                 subPage = await browser.newPage();
                 
-                // Block assets on subpages too for max speed
                 await subPage.setRequestInterception(true);
                 subPage.on('request', (req) => {
                     if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) {
@@ -212,9 +214,9 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
                 await subPage.setUserAgent(HEADERS['User-Agent']);
                 
-                await subPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+                await subPage.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 12000 }).catch(() => {});
                 
-                await new Promise(r => setTimeout(r, 600));
+                await new Promise(r => setTimeout(r, 400));
                 await subPage.evaluate(() => {
                     document.querySelectorAll('a, button').forEach(el => {
                         const txt = (el.innerText || '').toLowerCase();
@@ -227,7 +229,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 await subPage.waitForFunction(() => {
                     const bodyText = document.body.innerText;
                     return bodyText.includes('Direct Download') || bodyText.includes('Telegram Download');
-                }, { timeout: 8000 }).catch(() => {});
+                }, { timeout: 6000 }).catch(() => {});
 
                 const extractedLinks = await subPage.evaluate(() => {
                     const results = [];
@@ -243,7 +245,6 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
                 await subPage.close();
 
-                const linksList = [];
                 for (const btnInfo of extractedLinks) {
                     let targetUrl = btnInfo.href;
                     let linkText = btnInfo.text.toLowerCase();
@@ -260,25 +261,16 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     else if (targetUrl.includes('t.me/')) type = "Telegram Bot";
 
                     const qualityLabel = qualityName + " [" + type + "]";
-                    linksList.push({ quality: qualityLabel, size, language: "English", link: targetUrl });
+                    if (!downloads.some(d => d.link === targetUrl)) {
+                        downloads.push({ quality: qualityLabel, size, language: "English", link: targetUrl });
+                    }
                 }
-                return linksList;
-
             } catch (subErr) {
                 if (subPage) await subPage.close();
-                return [];
             }
-        });
+        }
 
-        const allResults = await Promise.all(downloadPromises);
-        await browser.close(); // Close main browser after all tasks finish
-
-        const downloads = [];
-        allResults.flat().forEach(d => {
-            if (!downloads.some(existing => existing.link === d.link)) {
-                downloads.push(d);
-            }
-        });
+        await browser.close();
 
         console.log(`🎉 Total Final Download Links Extracted: ${downloads.length}`);
         console.log(`==============================================\n`);
