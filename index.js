@@ -14,38 +14,38 @@ const HEADERS = {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ WP SEARCH API is Live 🚀",
-        endpoint: "/api/v1/cinesubz/search-wp?q=spider"
+        message: "IMALSHA CINESUBZ WP DISCOVERY API is Live 🚀",
+        endpoint: "/api/v1/cinesubz/wp-index"
     });
 });
 
-// WordPress Search API Endpoint
-app.get('/api/v1/cinesubz/search-wp', async (req, res) => {
+// WordPress REST API Root Discovery Endpoint
+app.get('/api/v1/cinesubz/wp-index', async (req, res) => {
     try {
-        const query = req.query.q || "spider";
-        console.log(`\n🔍 [WP SEARCH] Searching WordPress API for: ${query}`);
+        console.log(`\n🔍 [WP DISCOVERY] Fetching WordPress Root API Index...`);
         
-        const wpApiUrl = `https://cinesubz.net/wp-json/wp/v2/posts?search=${encodeURIComponent(query)}`;
+        // Fetching the main wp-json index which lists all available routes
+        const wpIndexUrl = `https://cinesubz.net/wp-json/`;
         
-        const response = await axios.get(wpApiUrl, {
+        const response = await axios.get(wpIndexUrl, {
             headers: HEADERS,
             timeout: 15000
         });
 
-        console.log(`🎉 WP Search Results found: ${response.data.length}`);
+        console.log(`🎉 WP Index fetched successfully!`);
 
         res.json({
             status: true,
             creator: "@Imalsha",
-            query,
-            results_count: response.data.length,
-            posts: response.data
+            site_name: response.data.name || "Cinesubz",
+            namespaces: response.data.namespaces || [],
+            routes: Object.keys(response.data.routes || {}) // Listing all available API paths
         });
 
     } catch (err) {
-        console.error(`❌ [WP SEARCH ERROR]: ${err.message}`);
+        console.error(`❌ [WP INDEX ERROR]: ${err.message}`);
         res.status(500).json({ status: false, error: err.message });
     }
 });
 
-app.listen(PORT, () => console.log(`WP Search API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`WP Discovery API running on port ${PORT}`));
