@@ -1,6 +1,5 @@
 const express = require('express');
 const axios = require('axios');
-const cheerio = require('cheerio');
 const cors = require('cors');
 
 const app = express();
@@ -12,46 +11,50 @@ const HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 };
 
-// Root Status Route
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ WP MOVIE TESTER is Live 🚀",
-        endpoints: {
-            test_movie: "/api/v1/cinesubz/test-movie-wp",
-            test_wp: "/api/v1/cinesubz/test-wp"
-        }
+        message: "IMALSHA CINESUBZ CPT TESTER is Live 🚀",
+        endpoint: "/api/v1/cinesubz/test-cpt"
     });
 });
 
-// WordPress Specific Movie Post Test Endpoint
-app.get('/api/v1/cinesubz/test-movie-wp', async (req, res) => {
-    try {
-        console.log(`\n🔍 [WP MOVIE TEST] Fetching specific Spider-Man movie via WP REST API...`);
-        
-        // Slug extracted directly from the movie URL
-        const slug = "spider-man-brand-new-day-2026-sinhala-subtitles";
-        const wpApiUrl = `https://cinesubz.net/wp-json/wp/v2/posts?slug=${slug}`;
-        
-        const response = await axios.get(wpApiUrl, {
-            headers: HEADERS,
-            timeout: 15000
-        });
+// Custom Post Types Test Endpoint
+app.get('/api/v1/cinesubz/test-cpt', async (req, res) => {
+    const slug = "spider-man-brand-new-day-2026-sinhala-subtitles";
+    
+    // Test URLs for WordPress Custom Post Types
+    const endpoints = [
+        `https://cinesubz.net/wp-json/wp/v2/movies?slug=${slug}`,
+        `https://cinesubz.net/wp-json/wp/v2/tvshows?slug=${slug}`,
+        `https://cinesubz.net/wp-json/wp/v2/types`
+    ];
 
-        console.log(`🎉 WP Movie API Response received! Posts found: ${response.data.length}`);
+    let foundData = null;
+    let matchedEndpoint = "";
 
-        res.json({
-            status: true,
-            creator: "@Imalsha",
-            slug_tested: slug,
-            found: response.data.length > 0,
-            movie_data: response.data[0] || null
-        });
-
-    } catch (err) {
-        console.error(`❌ [WP MOVIE TEST ERROR]: ${err.message}`);
-        res.status(500).json({ status: false, error: err.message });
+    for (const url of endpoints) {
+        try {
+            console.log(`🔍 Testing CPT Endpoint: ${url}`);
+            const response = await axios.get(url, { headers: HEADERS, timeout: 10000 });
+            if (response.data && (Array.isArray(response.data) ? response.data.length > 0 : true)) {
+                foundData = response.data;
+                matchedEndpoint = url;
+                break;
+            }
+        } catch (e) {
+            console.log(`⚠️ Endpoint failed (${url}): ${e.message}`);
+        }
     }
+
+    res.json({
+        status: true,
+        creator: "@Imalsha",
+        slug_tested: slug,
+        found: foundData !== null,
+        matched_endpoint: matchedEndpoint || "None",
+        data: foundData
+    });
 });
 
-app.listen(PORT, () => console.log(`Cinesubz WP Movie Test API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`CPT Test API running on port ${PORT}`));
