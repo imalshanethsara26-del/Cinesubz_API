@@ -15,38 +15,67 @@ const HEADERS = {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA ZETAFLIX API TESTER is Live 🚀",
-        endpoint: "/api/v1/cinesubz/test-player?id=96894"
+        message: "IMALSHA CINESUBZ MASTER API is Live 🚀",
+        endpoint: "/api/v1/cinesubz/get-movie?q=spider"
     });
 });
 
-// Test Zeta Player / Source Endpoint
-app.get('/api/v1/cinesubz/test-player', async (req, res) => {
+// Master endpoint to search movie, get ID and fetch Zeta player links
+app.get('/api/v1/cinesubz/get-movie', async (req, res) => {
     try {
-        const movieId = req.query.id || "96894"; // Let's test with a post/movie ID
-        console.log(`\n🔍 [ZETA PLAYER TEST] Testing player endpoint for ID: ${movieId}`);
+        const query = req.query.q || "Spider-Man";
+        console.log(`\n🔍 [AUTO-RESOLVE] Searching for movie query: ${query}`);
         
-        // Zetaflix / zetaplayer endpoint pattern from discovery
-        const playerApiUrl = `https://cinesubz.net/wp-json/zetaplayer/v2/movie/${movieId}`;
-        
-        const response = await axios.get(playerApiUrl, {
+        // 1. Search post by query in WordPress API
+        const searchRes = await axios.get(`https://cinesubz.net/wp-json/wp/v2/posts?search=${encodeURIComponent(query)}`, {
             headers: HEADERS,
             timeout: 15000
         });
-
-        console.log(`🎉 Zeta Player API Response received!`);
-
+        
+        if (!searchRes.data || searchRes.data.length === 0) {
+            return res.json({ status: false, message: "Movie not found via WordPress search" });
+        }
+        
+        // Let's pick the first matching movie post
+        const post = searchRes.data[0];
+        const postId = post.id;
+        const postTitle = post.title.rendered;
+        
+        console.log(`🎯 Found Post ID: ${postId} -> ${postTitle}`);
+        
+        // 2. Fetch Zeta Player data using the real post ID
+        const playerApiUrl = `https://cinesubz.net/wp-json/zetaplayer/v2/movie/${postId}`;
+        let playerData = null;
+        
+        try {
+            const playerRes = await axios.get(playerApiUrl, { headers: HEADERS, timeout: 10000 });
+            playerData = playerRes.data;
+        } catch (e) {
+            console.log(`⚠️ Player API failed with 'movie' type, trying 'post' type...`);
+            try {
+                const altRes = await axios.get(`https://cinesubz.net/wp-json/zetaplayer/v2/post/${postId}`, { headers: HEADERS, timeout: 10000 });
+                playerData = altRes.data;
+            } catch (err2) {
+                playerData = { error: err2.message };
+            }
+        }
+        
         res.json({
             status: true,
             creator: "@Imalsha",
-            movie_id: movieId,
-            player_data: response.data
+            matched_movie: {
+                id: postId,
+                title: postTitle,
+                link: post.link,
+                date: post.date
+            },
+            player_links: playerData
         });
 
     } catch (err) {
-        console.error(`❌ [ZETA PLAYER ERROR]: ${err.message}`);
-        res.status(500).json({ status: false, error: err.response?.data || err.message });
+        console.error(`❌ [MASTER ERROR]: ${err.message}`);
+        res.status(500).json({ status: false, error: err.message });
     }
 });
 
-app.listen(PORT, () => console.log(`Zetaflix Player API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Master API running on port ${PORT}`));
