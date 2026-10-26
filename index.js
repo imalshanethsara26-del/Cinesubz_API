@@ -16,11 +16,11 @@ app.get('/', (req, res) => {
     res.json({
         status: true,
         message: "IMALSHA CINESUBZ MASTER API is Live 🚀",
-        endpoint: "/api/v1/cinesubz/get-movie?q=spider"
+        endpoint: "/api/v1/cinesubz/get-movie?q=Spider-Man"
     });
 });
 
-// Master endpoint to search movie, get ID and fetch Zeta player links
+// Filtered Master endpoint to pick actual movie posts and fetch Zeta player links
 app.get('/api/v1/cinesubz/get-movie', async (req, res) => {
     try {
         const query = req.query.q || "Spider-Man";
@@ -36,12 +36,23 @@ app.get('/api/v1/cinesubz/get-movie', async (req, res) => {
             return res.json({ status: false, message: "Movie not found via WordPress search" });
         }
         
-        // Let's pick the first matching movie post
-        const post = searchRes.data[0];
-        const postId = post.id;
-        const postTitle = post.title.rendered;
+        // Filter out collection posts like MCU complete collection
+        let targetPost = null;
+        for (const post of searchRes.data) {
+            const title = post.title.rendered.toLowerCase();
+            if (!title.includes('complete collection') && !title.includes('universe')) {
+                targetPost = post;
+                break;
+            }
+        }
         
-        console.log(`🎯 Found Post ID: ${postId} -> ${postTitle}`);
+        // If all matched are collections, fallback to the first one
+        if (!targetPost) targetPost = searchRes.data[0];
+        
+        const postId = targetPost.id;
+        const postTitle = targetPost.title.rendered;
+        
+        console.log(`🎯 Selected Real Movie Post ID: ${postId} -> ${postTitle}`);
         
         // 2. Fetch Zeta Player data using the real post ID
         const playerApiUrl = `https://cinesubz.net/wp-json/zetaplayer/v2/movie/${postId}`;
@@ -66,8 +77,8 @@ app.get('/api/v1/cinesubz/get-movie', async (req, res) => {
             matched_movie: {
                 id: postId,
                 title: postTitle,
-                link: post.link,
-                date: post.date
+                link: targetPost.link,
+                date: targetPost.date
             },
             player_links: playerData
         });
