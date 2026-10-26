@@ -14,47 +14,38 @@ const HEADERS = {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ CPT TESTER is Live 🚀",
-        endpoint: "/api/v1/cinesubz/test-cpt"
+        message: "IMALSHA CINESUBZ WP SEARCH API is Live 🚀",
+        endpoint: "/api/v1/cinesubz/search-wp?q=spider"
     });
 });
 
-// Custom Post Types Test Endpoint
-app.get('/api/v1/cinesubz/test-cpt', async (req, res) => {
-    const slug = "spider-man-brand-new-day-2026-sinhala-subtitles";
-    
-    // Test URLs for WordPress Custom Post Types
-    const endpoints = [
-        `https://cinesubz.net/wp-json/wp/v2/movies?slug=${slug}`,
-        `https://cinesubz.net/wp-json/wp/v2/tvshows?slug=${slug}`,
-        `https://cinesubz.net/wp-json/wp/v2/types`
-    ];
+// WordPress Search API Endpoint
+app.get('/api/v1/cinesubz/search-wp', async (req, res) => {
+    try {
+        const query = req.query.q || "spider";
+        console.log(`\n🔍 [WP SEARCH] Searching WordPress API for: ${query}`);
+        
+        const wpApiUrl = `https://cinesubz.net/wp-json/wp/v2/posts?search=${encodeURIComponent(query)}`;
+        
+        const response = await axios.get(wpApiUrl, {
+            headers: HEADERS,
+            timeout: 15000
+        });
 
-    let foundData = null;
-    let matchedEndpoint = "";
+        console.log(`🎉 WP Search Results found: ${response.data.length}`);
 
-    for (const url of endpoints) {
-        try {
-            console.log(`🔍 Testing CPT Endpoint: ${url}`);
-            const response = await axios.get(url, { headers: HEADERS, timeout: 10000 });
-            if (response.data && (Array.isArray(response.data) ? response.data.length > 0 : true)) {
-                foundData = response.data;
-                matchedEndpoint = url;
-                break;
-            }
-        } catch (e) {
-            console.log(`⚠️ Endpoint failed (${url}): ${e.message}`);
-        }
+        res.json({
+            status: true,
+            creator: "@Imalsha",
+            query,
+            results_count: response.data.length,
+            posts: response.data
+        });
+
+    } catch (err) {
+        console.error(`❌ [WP SEARCH ERROR]: ${err.message}`);
+        res.status(500).json({ status: false, error: err.message });
     }
-
-    res.json({
-        status: true,
-        creator: "@Imalsha",
-        slug_tested: slug,
-        found: foundData !== null,
-        matched_endpoint: matchedEndpoint || "None",
-        data: foundData
-    });
 });
 
-app.listen(PORT, () => console.log(`CPT Test API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`WP Search API running on port ${PORT}`));
