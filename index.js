@@ -16,7 +16,7 @@ const HEADERS = {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ PROXY/BRIDGE API is Live 🚀",
+        message: "IMALSHA CINESUBZ TRACE & PROXY API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -25,7 +25,7 @@ app.get('/', (req, res) => {
     });
 });
 
-// 1. Latest Movies Endpoint (Using Axios & Cheerio)
+// 1. Latest Movies Endpoint
 app.get('/api/v1/cinesubz/latest', async (req, res) => {
     try {
         const pageNum = req.query.page || 1;
@@ -116,36 +116,44 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Smart Proxy Info & Download Endpoint (Using Chamindu's Backend)
+// 3. Trace & Bridge Endpoint
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🚀 [PROXY API] Fetching links for: ${movieUrl}`);
+    console.log(`🕵️‍♂️ [TRACING CHAMINDU API] Target URL: ${movieUrl}`);
 
     try {
-        // Construct Chamindu's API URL dynamically with the requested movie URL
         const encodedTargetUrl = encodeURIComponent(movieUrl);
         const chaminduApiUrl = `https://api.chamindu.site/api/v1/movies/cinesubz/infodl?q=${encodedTargetUrl}&api_key=chama_api_5dc8403e460b74f6f8eda19f55746e08`;
 
-        const response = await axios.get(chaminduApiUrl, { timeout: 20000 });
-        const apiData = response.data;
+        console.log(`🌐 Outgoing Request URL: ${chaminduApiUrl}`);
 
-        // Override creator name to @Imalsha as requested
+        const response = await axios.get(chaminduApiUrl, {
+            timeout: 20000,
+            validateStatus: () => true
+        });
+
+        // 🔍 Print headers to Render console
+        console.log(`📦 [RESPONSE STATUS]:`, response.status);
+        console.log(`📋 [RESPONSE HEADERS]:`, JSON.stringify(response.headers, null, 2));
+        console.log(`🔑 [REQUEST CONFIG HEADERS]:`, JSON.stringify(response.config.headers, null, 2));
+
+        const apiData = response.data;
         if (apiData) {
             apiData.creator = "@Imalsha";
         }
 
-        console.log(`🎉 Successfully fetched and bridged data!`);
+        console.log(`🎉 Successfully Traced & Bridged!`);
         console.log(`==============================================\n`);
 
         res.json(apiData);
 
     } catch (err) {
-        console.error(`❌ [PROXY ERROR]: ${err.message}`);
-        res.status(500).json({ status: false, error: "Failed to fetch download links: " + err.message });
+        console.error(`❌ [TRACE ERROR]: ${err.message}`);
+        res.status(500).json({ status: false, error: "Failed to trace: " + err.message });
     }
 });
 
-app.listen(PORT, () => console.log(`Cinesubz Proxy API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Cinesubz Trace & Proxy API running on port ${PORT}`));
