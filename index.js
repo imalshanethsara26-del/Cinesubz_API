@@ -116,13 +116,13 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Fixed Independent Info & Download Endpoint
+// 3. Advanced Wrapper-Resolving Info & Download Endpoint
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔍 [INDEPENDENT SCRAPER] Processing: ${movieUrl}`);
+    console.log(`🔍 [ADVANCED SCRAPER] Processing: ${movieUrl}`);
 
     try {
         const movieRes = await axios.get(movieUrl, { headers: HEADERS, timeout: 15000 });
@@ -142,45 +142,71 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         });
 
-        const downloads = [];
-
-        // Direct and wrapper link extraction from movie page
+        const rawLinks = [];
         $('a').each((i, el) => {
             const href = $(el).attr('href') || '';
-            const text = $(el).text().trim() + ' ' + ($(el).parent().text() || '');
-
-            if (href && !href.startsWith('javascript:') && !href.startsWith('#')) {
-                const lLower = href.toLowerCase();
-                
-                const isPixelDrain = lLower.includes('pixeldrain');
-                const isSuperCloud = lLower.includes('supercloud') || lLower.includes('drive7');
-                const isTelegram = lLower.includes('t.me') || lLower.includes('telegram');
-                const isCsplayer = lLower.includes('csplayer') || lLower.includes('zt-links') || lLower.includes('drive.');
-
-                if (isPixelDrain || isSuperCloud || isTelegram || isCsplayer) {
-                    let type = "Direct Server";
-                    if (isPixelDrain) type = "PixelDrain";
-                    else if (isTelegram) type = "Telegram Bot";
-                    else if (isSuperCloud) type = "SuperCloud";
-
-                    const qMatch = href.match(/(2160p|4K|1080p|720p|480p)/i) || text.match(/(2160p|4K|1080p|720p|480p)/i) || title.match(/(2160p|4K|1080p|720p|480p)/i) || ['WEB-DL'];
-                    const qualityName = qMatch[0].toUpperCase();
-                    const qualityLabel = `${qualityName} [${type}]`;
-
-                    if (!downloads.some(d => d.link === href)) {
-                        downloads.push({
-                            quality: qualityLabel,
-                            size: "N/A",
-                            language: "English / Sinhala Sub",
-                            link: href,
-                            direct_link: href
-                        });
-                    }
-                }
+            if (href.includes('zt-links') || href.includes('csplayer') || href.includes('pixeldrain')) {
+                rawLinks.push(href);
             }
         });
 
-        console.log(`🎉 Extracted ${downloads.length} download links successfully!`);
+        const downloads = [];
+
+        // Loop through each wrapper link and resolve final target
+        for (const link of rawLinks) {
+            try {
+                const wrapRes = await axios.get(link, { 
+                    headers: HEADERS, 
+                    timeout: 8000,
+                    maxRedirects: 5 
+                });
+                
+                const finalPageHtml = wrapRes.data;
+                const $w = cheerio.load(finalPageHtml);
+
+                // Extract direct download links from the resolved page
+                $w('a, button, [data-href], [data-url]').each((j, subEl) => {
+                    let dLink = $w(subEl).attr('href') || $w(subEl).attr('data-href') || $w(subEl).attr('data-url') || '';
+                    let dText = $w(subEl).text().trim();
+
+                    if (dLink && !dLink.startsWith('javascript:') && !dLink.startsWith('#')) {
+                        const lLower = dLink.toLowerCase();
+                        if (lLower.includes('pixeldrain') || lLower.includes('supercloud') || lLower.includes('t.me') || lLower.includes('csplayer') || lLower.includes('drive')) {
+                            
+                            let type = "Direct Server";
+                            if (lLower.includes('pixeldrain')) type = "PixelDrain";
+                            else if (lLower.includes('t.me')) type = "Telegram";
+                            else if (lLower.includes('supercloud')) type = "SuperCloud";
+
+                            const qMatch = link.match(/(2160p|4K|1080p|720p|480p)/i) || dText.match(/(2160p|4K|1080p|720p|480p)/i) || ['HD'];
+                            const qualityLabel = `${qMatch[0].toUpperCase()} [${type}]`;
+
+                            if (!downloads.some(d => d.link === dLink)) {
+                                downloads.push({
+                                    quality: qualityLabel,
+                                    size: "N/A",
+                                    language: "English / Sinhala Sub",
+                                    link: dLink,
+                                    direct_link: dLink
+                                });
+                            }
+                        }
+                    }
+                });
+
+            } catch (e) {
+                console.log(`⚠️ Wrapper resolve error for (${link}): ${e.message}`);
+                downloads.push({
+                    quality: "WEB-DL [Direct Server]",
+                    size: "N/A",
+                    language: "English / Sinhala Sub",
+                    link: link,
+                    direct_link: link
+                });
+            }
+        }
+
+        console.log(`🎉 Resolved and extracted ${downloads.length} final download links!`);
         console.log(`==============================================\n`);
 
         res.json({
