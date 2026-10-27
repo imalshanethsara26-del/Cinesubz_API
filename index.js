@@ -44,7 +44,7 @@ function getChromeExecutablePath() {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ BOT-READY API is Live 🚀",
+        message: "IMALSHA CINESUBZ JSON-INTERCEPTOR API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -144,72 +144,68 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Advanced Resolver: Bypasses timer and extracts final direct download link from csplayer
-async function resolveZtLinkAndClickDownload(page, ztUrl) {
+// Advanced Resolver: Network Interception to catch background JSON/API responses from csplayer
+async function resolveZtLinkAndCaptureJson(page, ztUrl) {
     try {
         console.log(`\n🔍 [RESOLVER] Navigating to wrapper: ${ztUrl}`);
+        
+        let interceptedPayload = null;
+
+        const responseListener = async (response) => {
+            const reqUrl = response.url();
+            const contentType = response.headers()['content-type'] || '';
+            if (contentType.includes('application/json') || reqUrl.includes('api') || reqUrl.includes('json') || reqUrl.includes('get')) {
+                try {
+                    const json = await response.json();
+                    if (json && (json.file_name || json.links || json.download || JSON.stringify(json).includes('mp4') || JSON.stringify(json).includes('server'))) {
+                        interceptedPayload = json;
+                        console.log(`🎯 [INTERCEPTED JSON]:`, reqUrl);
+                    }
+                } catch (e) {}
+            }
+        };
+
+        page.on('response', responseListener);
+
         await page.goto(ztUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
 
-        // Wait for timer to finish (approx 3 seconds)
-        await new Promise(r => setTimeout(r, 3500));
+        // Wait for timer to finish
+        await new Promise(r => setTimeout(r, 3000));
 
-        // Step 1: Click "Go to Download Page" button on zt-links page
-        const clickedGo = await page.evaluate(() => {
+        // Click "Go to Download Page"
+        await page.evaluate(() => {
             const elements = Array.from(document.querySelectorAll('a, button, div, span'));
             const target = elements.find(el => {
                 const txt = (el.innerText || '').toUpperCase();
                 return txt.includes('GO TO DOWNLOAD') || txt.includes('DOWNLOAD PAGE');
             });
-            if (target) {
-                target.click();
-                return true;
-            }
-            return false;
+            if (target) target.click();
         });
 
-        if (clickedGo) {
-            console.log(`✨ Clicked 'Go to Download Page' successfully!`);
-        }
-
-        // Wait for navigation to csplayer space
         try {
             await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 8000 });
         } catch (e) {}
 
-        console.log(`🌐 Landed on Player Page: ${page.url()}`);
+        // Wait for csplayer background fetches
+        await new Promise(r => setTimeout(r, 3000));
 
-        // Wait for player page content to load
-        await new Promise(r => setTimeout(r, 2000));
+        page.off('response', responseListener);
 
-        // Step 2: Extract the direct download link directly from the buttons/anchors in csplayer page
-        const realDirectLink = await page.evaluate(() => {
-            const anchors = Array.from(document.querySelectorAll('a'));
-            // Look for direct server or download links
-            const dlAnchor = anchors.find(a => {
-                const href = (a.href || '').toLowerCase();
-                const text = (a.innerText || '').toUpperCase();
-                return text.includes('DIRECT DOWNLOAD') || href.includes('/server') || href.includes('pixeldrain') || href.includes('storage');
-            });
-
-            if (dlAnchor && dlAnchor.href) {
-                return dlAnchor.href;
-            }
-
-            // Fallback: get any external server link
-            const anyServer = anchors.find(a => a.href && (a.href.includes('drive.csplayer') || a.href.includes('pixeldrain')));
-            return anyServer ? anyServer.href : null;
-        });
-
-        if (realDirectLink) {
-            console.log(`✨ [FOUND REAL DIRECT LINK]: ${realDirectLink}`);
-            return realDirectLink;
+        if (interceptedPayload) {
+            return { type: 'json', data: interceptedPayload };
         }
 
-        return ztUrl;
+        // Fallback: extract direct links if JSON wasn't intercepted
+        const realDirectLinks = await page.evaluate(() => {
+            const anchors = Array.from(document.querySelectorAll('a'));
+            return anchors.map(a => a.href).filter(h => h && (h.includes('/server') || h.includes('pixeldrain') || h.includes('ext=mp4')));
+        });
+
+        return { type: 'links', data: realDirectLinks };
 
     } catch (err) {
         console.error(`❌ [RESOLVER ERROR]: ${err.message}`);
-        return ztUrl;
+        return { type: 'links', data: [ztUrl] };
     }
 }
 
@@ -227,7 +223,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         const $ = cheerio.load(movieRes.data);
 
         const title = $('meta[property="og:title"]').attr('content') || $('h1').text().trim() || 'Unknown';
-        const image = $('meta[property="og:image"]').attr('content') || '';
+        const image = $('meta[property="og:image"]').attr('content'] || '';
         const quality = $('.quality').first().text().trim() || 'WEB-DL';
         const rating = $('.imdb-rate').first().text().trim() || 'N/A';
         const director = $('span.director').text().trim() || 'N/A';
@@ -273,31 +269,45 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         const downloads = [];
 
         for (const item of rawZtLinks) {
-            const realDownloadLink = await resolveZtLinkAndClickDownload(page, item.href);
+            const result = await resolveZtLinkAndCaptureJson(page, item.href);
             
-            const lLower = realDownloadLink.toLowerCase();
-            let type = "Direct Server";
-            if (lLower.includes('pixeldrain')) type = "PixelDrain";
-            else if (lLower.includes('t.me')) type = "Telegram";
-            else if (lLower.includes('supercloud')) type = "SuperCloud";
-
-            const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p)/i) || ['HD'];
-            const qualityLabel = `${qMatch[0].toUpperCase()} [${type}]`;
-
-            if (!downloads.some(d => d.link === realDownloadLink)) {
+            if (result.type === 'json') {
+                // If intercepted JSON contains structured data or links
                 downloads.push({
-                    quality: qualityLabel,
-                    size: "N/A",
+                    quality: item.text || "HD [Direct Server]",
+                    size: result.data.file_size || "N/A",
                     language: "English / Sinhala Sub",
-                    link: realDownloadLink,
-                    direct_link: realDownloadLink
+                    raw_json: result.data,
+                    link: result.data.download_url || result.data.url || item.href,
+                    direct_link: result.data.download_url || result.data.url || item.href
+                });
+            } else if (result.type === 'links' && Array.isArray(result.data)) {
+                result.data.forEach(link => {
+                    const lLower = link.toLowerCase();
+                    let type = "Direct Server";
+                    if (lLower.includes('pixeldrain')) type = "PixelDrain";
+                    else if (lLower.includes('t.me')) type = "Telegram";
+                    else if (lLower.includes('supercloud')) type = "SuperCloud";
+
+                    const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p)/i) || ['HD'];
+                    const qualityLabel = `${qMatch[0].toUpperCase()} [${type}]`;
+
+                    if (!downloads.some(d => d.link === link)) {
+                        downloads.push({
+                            quality: qualityLabel,
+                            size: "N/A",
+                            language: "English / Sinhala Sub",
+                            link: link,
+                            direct_link: link
+                        });
+                    }
                 });
             }
         }
 
         await browser.close();
 
-        console.log(`🎉 Successfully extracted ${downloads.length} real direct download links!`);
+        console.log(`🎉 Successfully processed downloads with network interception!`);
         console.log(`==============================================\n`);
 
         res.json({
@@ -327,4 +337,4 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Bot-Ready Cinesubz API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`JSON Interceptor Cinesubz API running on port ${PORT}`));
