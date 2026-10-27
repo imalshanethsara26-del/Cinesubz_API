@@ -44,7 +44,7 @@ function getChromeExecutablePath() {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ JSON-INTERCEPTOR API is Live 🚀",
+        message: "IMALSHA CINESUBZ FULL CLICK & INTERCEPT API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -144,7 +144,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Advanced Resolver: Network Interception to catch background JSON/API responses from csplayer
+// Advanced Resolver: Clicks both wrapper button and player download button while capturing responses
 async function resolveZtLinkAndCaptureJson(page, ztUrl) {
     try {
         console.log(`\n🔍 [RESOLVER] Navigating to wrapper: ${ztUrl}`);
@@ -153,16 +153,13 @@ async function resolveZtLinkAndCaptureJson(page, ztUrl) {
 
         const responseListener = async (response) => {
             const reqUrl = response.url();
-            const contentType = response.headers()['content-type'] || '';
-            if (contentType.includes('application/json') || reqUrl.includes('api') || reqUrl.includes('json') || reqUrl.includes('get')) {
-                try {
-                    const json = await response.json();
-                    if (json && (json.file_name || json.links || json.download || JSON.stringify(json).includes('mp4') || JSON.stringify(json).includes('server'))) {
-                        interceptedPayload = json;
-                        console.log(`🎯 [INTERCEPTED JSON]:`, reqUrl);
-                    }
-                } catch (e) {}
-            }
+            try {
+                const json = await response.json();
+                if (json && (json.file_name || json.links || json.download || JSON.stringify(json).includes('mp4') || JSON.stringify(json).includes('server'))) {
+                    interceptedPayload = json;
+                    console.log(`🎯 [INTERCEPTED JSON]:`, reqUrl);
+                }
+            } catch (e) {}
         };
 
         page.on('response', responseListener);
@@ -172,7 +169,7 @@ async function resolveZtLinkAndCaptureJson(page, ztUrl) {
         // Wait for timer to finish
         await new Promise(r => setTimeout(r, 3000));
 
-        // Click "Go to Download Page"
+        // Step 1: Click "Go to Download Page"
         await page.evaluate(() => {
             const elements = Array.from(document.querySelectorAll('a, button, div, span'));
             const target = elements.find(el => {
@@ -186,8 +183,21 @@ async function resolveZtLinkAndCaptureJson(page, ztUrl) {
             await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 8000 });
         } catch (e) {}
 
-        // Wait for csplayer background fetches
-        await new Promise(r => setTimeout(r, 3000));
+        // Wait for player page to load
+        await new Promise(r => setTimeout(r, 2000));
+
+        // Step 2: Click "Direct Download (New)" inside csplayer page to trigger final link/JSON
+        await page.evaluate(() => {
+            const elements = Array.from(document.querySelectorAll('a, button, div'));
+            const target = elements.find(el => {
+                const txt = (el.innerText || '').toUpperCase();
+                return txt.includes('DIRECT DOWNLOAD') || txt.includes('DOWNLOAD (NEW)');
+            });
+            if (target) target.click();
+        });
+
+        // Wait for background requests/redirections after clicking
+        await new Promise(r => setTimeout(r, 3500));
 
         page.off('response', responseListener);
 
@@ -196,12 +206,13 @@ async function resolveZtLinkAndCaptureJson(page, ztUrl) {
         }
 
         // Fallback: extract direct links if JSON wasn't intercepted
+        const currentUrl = page.url();
         const realDirectLinks = await page.evaluate(() => {
             const anchors = Array.from(document.querySelectorAll('a'));
             return anchors.map(a => a.href).filter(h => h && (h.includes('/server') || h.includes('pixeldrain') || h.includes('ext=mp4')));
         });
 
-        return { type: 'links', data: realDirectLinks };
+        return { type: 'links', data: realDirectLinks.length > 0 ? realDirectLinks : [currentUrl] };
 
     } catch (err) {
         console.error(`❌ [RESOLVER ERROR]: ${err.message}`);
@@ -306,7 +317,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         await browser.close();
 
-        console.log(`🎉 Successfully processed downloads with network interception!`);
+        console.log(`🎉 Successfully processed downloads with full click & interception!`);
         console.log(`==============================================\n`);
 
         res.json({
@@ -336,4 +347,4 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`JSON Interceptor Cinesubz API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Full Interceptor Cinesubz API running on port ${PORT}`));
