@@ -144,73 +144,68 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Advanced Resolver: Clicks "Direct Download" inside csplayer to get real final link
+// Advanced Resolver: Bypasses timer and extracts final direct download link from csplayer
 async function resolveZtLinkAndClickDownload(page, ztUrl) {
     try {
         console.log(`\n🔍 [RESOLVER] Navigating to wrapper: ${ztUrl}`);
-        await page.goto(ztUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+        await page.goto(ztUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
 
-        // Step 1: Click "Go to Download Page" on zt-links page
-        for (let attempt = 1; attempt <= 3; attempt++) {
-            await new Promise(r => setTimeout(r, 1200));
-            const clicked = await page.evaluate(() => {
-                const btns = Array.from(document.querySelectorAll('a, button, div.btn'));
-                const target = btns.find(b => {
-                    const text = (b.innerText || '').toUpperCase();
-                    return text.includes('GO TO DOWNLOAD') || text.includes('DOWNLOAD PAGE') || text.includes('CLICK HERE');
-                });
-                if (target) { target.click(); return true; }
-                return false;
+        // Wait for timer to finish (approx 3 seconds)
+        await new Promise(r => setTimeout(r, 3500));
+
+        // Step 1: Click "Go to Download Page" button on zt-links page
+        const clickedGo = await page.evaluate(() => {
+            const elements = Array.from(document.querySelectorAll('a, button, div, span'));
+            const target = elements.find(el => {
+                const txt = (el.innerText || '').toUpperCase();
+                return txt.includes('GO TO DOWNLOAD') || txt.includes('DOWNLOAD PAGE');
             });
-            if (clicked) break;
+            if (target) {
+                target.click();
+                return true;
+            }
+            return false;
+        });
+
+        if (clickedGo) {
+            console.log(`✨ Clicked 'Go to Download Page' successfully!`);
         }
 
+        // Wait for navigation to csplayer space
         try {
-            await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 6000 });
+            await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 8000 });
         } catch (e) {}
 
         console.log(`🌐 Landed on Player Page: ${page.url()}`);
 
-        // Step 2: On csplayer page, find and click "Direct Download (New)" or "Direct Download 1"
-        for (let attempt = 1; attempt <= 3; attempt++) {
-            await new Promise(r => setTimeout(r, 1500));
-
-            const clickedDownloadBtn = await page.evaluate(() => {
-                const anchors = Array.from(document.querySelectorAll('a, button, div'));
-                const dlBtn = anchors.find(a => {
-                    const txt = (a.innerText || '').toUpperCase();
-                    return txt.includes('DIRECT DOWNLOAD') || txt.includes('DOWNLOAD (NEW)');
-                });
-                if (dlBtn) {
-                    dlBtn.click();
-                    return true;
-                }
-                return false;
-            });
-
-            if (clickedDownloadBtn) {
-                console.log(`✨ Clicked Direct Download button on player page!`);
-                break;
-            }
-        }
-
-        // Wait a moment for redirect or new link generation
+        // Wait for player page content to load
         await new Promise(r => setTimeout(r, 2000));
 
-        let finalDirectUrl = page.url();
-        
-        // If page didn't redirect, check if any direct anchor appeared
-        const extractedHref = await page.evaluate(() => {
-            const downloadAnchor = document.querySelector('a[href*="server"], a[href*="dl."], a[href*="pixeldrain"], a[href*="storage"]');
-            return downloadAnchor ? downloadAnchor.href : null;
+        // Step 2: Extract the direct download link directly from the buttons/anchors in csplayer page
+        const realDirectLink = await page.evaluate(() => {
+            const anchors = Array.from(document.querySelectorAll('a'));
+            // Look for direct server or download links
+            const dlAnchor = anchors.find(a => {
+                const href = (a.href || '').toLowerCase();
+                const text = (a.innerText || '').toUpperCase();
+                return text.includes('DIRECT DOWNLOAD') || href.includes('/server') || href.includes('pixeldrain') || href.includes('storage');
+            });
+
+            if (dlAnchor && dlAnchor.href) {
+                return dlAnchor.href;
+            }
+
+            // Fallback: get any external server link
+            const anyServer = anchors.find(a => a.href && (a.href.includes('drive.csplayer') || a.href.includes('pixeldrain')));
+            return anyServer ? anyServer.href : null;
         });
 
-        if (extractedHref && !extractedHref.includes('csplayer2.space')) {
-            finalDirectUrl = extractedHref;
+        if (realDirectLink) {
+            console.log(`✨ [FOUND REAL DIRECT LINK]: ${realDirectLink}`);
+            return realDirectLink;
         }
 
-        console.log(`✨ [FINAL REAL LINK]: ${finalDirectUrl}`);
-        return finalDirectUrl;
+        return ztUrl;
 
     } catch (err) {
         console.error(`❌ [RESOLVER ERROR]: ${err.message}`);
@@ -218,7 +213,7 @@ async function resolveZtLinkAndClickDownload(page, ztUrl) {
     }
 }
 
-// 3. Info & Download Endpoint with Deep Click Resolution
+// 3. Info & Download Endpoint
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -302,7 +297,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         await browser.close();
 
-        console.log(`🎉 Successfully extracted ${downloads.length} real direct download links for bot!`);
+        console.log(`🎉 Successfully extracted ${downloads.length} real direct download links!`);
         console.log(`==============================================\n`);
 
         res.json({
