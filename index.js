@@ -223,7 +223,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         const $ = cheerio.load(movieRes.data);
 
         const title = $('meta[property="og:title"]').attr('content') || $('h1').text().trim() || 'Unknown';
-        const image = $('meta[property="og:image"]').attr('content'] || '';
+        const image = $('meta[property="og:image"]').attr('content') || '';
         const quality = $('.quality').first().text().trim() || 'WEB-DL';
         const rating = $('.imdb-rate').first().text().trim() || 'N/A';
         const director = $('span.director').text().trim() || 'N/A';
@@ -272,7 +272,6 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             const result = await resolveZtLinkAndCaptureJson(page, item.href);
             
             if (result.type === 'json') {
-                // If intercepted JSON contains structured data or links
                 downloads.push({
                     quality: item.text || "HD [Direct Server]",
                     size: result.data.file_size || "N/A",
