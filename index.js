@@ -1,7 +1,10 @@
 const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
+const puppeteer = require('puppeteer');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -9,15 +12,39 @@ const PORT = process.env.PORT || 8080;
 app.use(cors());
 
 const HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Referer': 'https://cinesubz.co/'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 };
+
+// Auto Find Chrome Executable on Render
+function getChromeExecutablePath() {
+    const possiblePaths = [
+        '/opt/render/project/src/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome',
+        '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome',
+        process.env.PUPPETEER_EXECUTABLE_PATH
+    ];
+
+    for (const p of possiblePaths) {
+        if (p && fs.existsSync(p)) return p;
+    }
+
+    const baseCache = '/opt/render/project/src/.cache/puppeteer/chrome';
+    if (fs.existsSync(baseCache)) {
+        try {
+            const dirs = fs.readdirSync(baseCache);
+            for (const dir of dirs) {
+                const autoPath = path.join(baseCache, dir, 'chrome-linux64', 'chrome');
+                if (fs.existsSync(autoPath)) return autoPath;
+            }
+        } catch (e) {}
+    }
+    return undefined;
+}
 
 // Root Status Route
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ TRACING API is Live 🚀",
+        message: "IMALSHA CINESUBZ PUPPETEER RESOLVER API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -117,14 +144,74 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Deep Tracing Info & Download Endpoint with Detailed Terminal Logs
+// Helper function using Puppeteer to bypass timer and extract real download links
+async function resolveZtLink(page, ztUrl) {
+    try {
+        console.log(`\n🔍 [PUPPETEER] Navigating to wrapper: ${ztUrl}`);
+        await page.goto(ztUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+
+        // Wait for timer to finish and click "Go to Download Page" button
+        for (let attempt = 1; attempt <= 4; attempt++) {
+            await new Promise(r => setTimeout(r, 1500));
+
+            const clicked = await page.evaluate(() => {
+                const btns = Array.from(document.querySelectorAll('a, button, div.btn'));
+                const target = btns.find(b => {
+                    const text = (b.innerText || '').toUpperCase();
+                    return text.includes('GO TO DOWNLOAD') || text.includes('DOWNLOAD PAGE') || text.includes('CLICK HERE');
+                });
+                if (target) {
+                    target.click();
+                    return true;
+                }
+                return false;
+            });
+
+            if (clicked) {
+                console.log(`✨ Clicked download button on attempt ${attempt}`);
+                break;
+            }
+        }
+
+        // Wait for navigation to csplayer / final download space
+        try {
+            await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 6000 });
+        } catch (e) {}
+
+        const finalPageUrl = page.url();
+        console.log(`🌐 Final Landed URL: ${finalPageUrl}`);
+
+        // Extract direct download links present on the final page
+        const directLinks = await page.evaluate(() => {
+            const anchors = Array.from(document.querySelectorAll('a'));
+            const links = [];
+            anchors.forEach(a => {
+                const href = a.href || '';
+                const text = (a.innerText || '').trim();
+                if (href && !href.startsWith('javascript:') && !href.startsWith('#')) {
+                    links.push({ href, text });
+                }
+            });
+            return links;
+        });
+
+        return directLinks;
+
+    } catch (err) {
+        console.error(`❌ [RESOLVER ERROR]: ${err.message}`);
+        return [];
+    }
+}
+
+// 3. Info & Download Endpoint with Puppeteer Resolution
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔍 [TRACING SCRAPER] Processing Movie URL: ${movieUrl}`);
+    console.log(`🔥 [INFO DL] Processing Movie URL: ${movieUrl}`);
 
+    let browser = null;
     try {
         const movieRes = await axios.get(movieUrl, { headers: HEADERS, timeout: 15000 });
         const $ = cheerio.load(movieRes.data);
@@ -143,105 +230,68 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         });
 
-        const rawLinks = [];
+        const rawZtLinks = [];
         $('a').each((i, el) => {
             const href = $(el).attr('href') || '';
             const text = $(el).text().trim();
-            if (href.includes('zt-links') || href.includes('csplayer') || href.includes('pixeldrain')) {
-                rawLinks.push({ href, text });
+            if (href.includes('zt-links')) {
+                rawZtLinks.push({ href, text });
             }
         });
 
-        console.log(`📦 Found ${rawLinks.length} raw wrapper links on movie page.`);
+        console.log(`📦 Found ${rawZtLinks.length} wrapper links. Launching Puppeteer browser...`);
+
+        const chromePath = getChromeExecutablePath();
+        browser = await puppeteer.launch({
+            headless: true,
+            executablePath: chromePath,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--no-first-run',
+                '--no-zygote',
+                '--single-process',
+                '--disable-gpu'
+            ]
+        });
+
+        const page = await browser.newPage();
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
 
         const downloads = [];
 
-        for (const item of rawLinks) {
-            console.log(`\n------------------------------------------`);
-            console.log(`➡️ Checking Wrapper/Link: ${item.href} (${item.text})`);
+        for (const item of rawZtLinks) {
+            const resolvedLinks = await resolveZtLink(page, item.href);
             
-            try {
-                const wrapRes = await axios.get(item.href, { 
-                    headers: HEADERS, 
-                    timeout: 8000,
-                    maxRedirects: 5 
-                });
-                
-                const finalHtml = wrapRes.data;
-                const $w = cheerio.load(finalHtml);
+            resolvedLinks.forEach(dl => {
+                const lLower = dl.href.toLowerCase();
+                if (lLower.includes('pixeldrain') || lLower.includes('supercloud') || lLower.includes('t.me') || lLower.includes('drive')) {
+                    let type = "Direct Server";
+                    if (lLower.includes('pixeldrain')) type = "PixelDrain";
+                    else if (lLower.includes('t.me')) type = "Telegram";
+                    else if (lLower.includes('supercloud')) type = "SuperCloud";
 
-                console.log(`📥 Fetched Wrapper Status: 200. Scanning HTML for iframes or buttons...`);
+                    const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p)/i) || ['HD'];
+                    const qualityLabel = `${qMatch[0].toUpperCase()} [${type}]`;
 
-                // Check for iframe sources inside wrapper
-                let iframeSrc = $w('iframe').attr('src') || '';
-                if (iframeSrc) {
-                    console.log(`📺 Found Iframe inside wrapper: ${iframeSrc}`);
-                    try {
-                        const iframeRes = await axios.get(iframeSrc, { headers: HEADERS, timeout: 6000 });
-                        const $i = cheerio.load(iframeRes.data);
-                        
-                        $i('a, button, [data-href], [data-url]').each((subI, subEl) => {
-                            let subLink = $i(subEl).attr('href') || $i(subEl).attr('data-href') || $i(subEl).attr('data-url') || '';
-                            let subText = $i(subEl).text().trim();
-                            
-                            if (subLink && !subLink.startsWith('javascript:') && !subLink.startsWith('#')) {
-                                console.log(`   ✨ [Iframe Link Found]: ${subLink} | Text: ${subText}`);
-                                const lLower = subLink.toLowerCase();
-                                let type = "Direct Server";
-                                if (lLower.includes('pixeldrain')) type = "PixelDrain";
-                                else if (lLower.includes('t.me')) type = "Telegram";
-                                else if (lLower.includes('supercloud')) type = "SuperCloud";
-
-                                if (!downloads.some(d => d.link === subLink)) {
-                                    downloads.push({
-                                        quality: `HD [${type}]`,
-                                        size: "N/A",
-                                        language: "English / Sinhala Sub",
-                                        link: subLink,
-                                        direct_link: subLink
-                                    });
-                                }
-                            }
+                    if (!downloads.some(d => d.link === dl.href)) {
+                        downloads.push({
+                            quality: qualityLabel,
+                            size: "N/A",
+                            language: "English / Sinhala Sub",
+                            link: dl.href,
+                            direct_link: dl.href
                         });
-                    } catch (errI) {
-                        console.log(`⚠️ Iframe fetch error: ${errI.message}`);
                     }
                 }
-
-                // Also scan regular links in wrapper page
-                $w('a, button, [data-href], [data-url]').each((j, subEl) => {
-                    let dLink = $w(subEl).attr('href') || $w(subEl).attr('data-href') || $w(subEl).attr('data-url') || '';
-                    let dText = $w(subEl).text().trim();
-
-                    if (dLink && !dLink.startsWith('javascript:') && !dLink.startsWith('#')) {
-                        const lLower = dLink.toLowerCase();
-                        if (lLower.includes('pixeldrain') || lLower.includes('supercloud') || lLower.includes('t.me') || lLower.includes('csplayer') || lLower.includes('drive')) {
-                            console.log(`   ✨ [Wrapper Link Found]: ${dLink} | Text: ${dText}`);
-                            
-                            let type = "Direct Server";
-                            if (lLower.includes('pixeldrain')) type = "PixelDrain";
-                            else if (lLower.includes('t.me')) type = "Telegram";
-                            else if (lLower.includes('supercloud')) type = "SuperCloud";
-
-                            if (!downloads.some(d => d.link === dLink)) {
-                                downloads.push({
-                                    quality: `HD [${type}]`,
-                                    size: "N/A",
-                                    language: "English / Sinhala Sub",
-                                    link: dLink,
-                                    direct_link: dLink
-                                });
-                            }
-                        }
-                    }
-                });
-
-            } catch (e) {
-                console.log(`❌ Wrapper fetch/resolve error for (${item.href}): ${e.message}`);
-            }
+            });
         }
 
-        console.log(`\n🎉 Total extracted download links: ${downloads.length}`);
+        await browser.close();
+
+        console.log(`🎉 Successfully extracted ${downloads.length} real download links!`);
         console.log(`==============================================\n`);
 
         res.json({
@@ -260,14 +310,15 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 genres: ["Action", "Adventure", "Sinhala Subtitles"],
                 story: story || 'No description available',
                 year: "2026",
-                downloads: downloads.length > 0 ? downloads : [{ quality: "HD [Telegram]", size: "N/A", language: "English / Sinhala Sub", link: "https://t.me/CineSubzMoviesOfficial", direct_link: "https://t.me/CineSubzMoviesOfficial" }]
+                downloads: downloads.length > 0 ? downloads : [{ quality: "HD [Telegram]", size: "N/A", language: "English / Sinhala Sub", link: "https://t.me/CineSubzAdmin", direct_link: "https://t.me/CineSubzAdmin" }]
             }
         });
 
     } catch (err) {
+        if (browser) await browser.close();
         console.error(`❌ [SCRAPER ERROR]: ${err.message}`);
         res.status(500).json({ status: false, error: err.message });
     }
 });
 
-app.listen(PORT, () => console.log(`Tracing Cinesubz Scraper API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Puppeteer Cinesubz API running on port ${PORT}`));
