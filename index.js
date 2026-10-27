@@ -9,14 +9,15 @@ const PORT = process.env.PORT || 8080;
 app.use(cors());
 
 const HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Referer': 'https://cinesubz.co/'
 };
 
 // Root Status Route
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ INDEPENDENT SCRAPER API is Live 🚀",
+        message: "IMALSHA CINESUBZ TRACING API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -25,7 +26,7 @@ app.get('/', (req, res) => {
     });
 });
 
-// 1. Latest Movies Endpoint (Let's Movie)
+// 1. Latest Movies Endpoint
 app.get('/api/v1/cinesubz/latest', async (req, res) => {
     try {
         const pageNum = req.query.page || 1;
@@ -83,7 +84,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
 
         $('a').each((i, el) => {
             const href = $(el).attr('href') || '';
-            const parent = $(el).closest('article, .post, .item, div');
+            const parent = $(el).closest('article, .result-item, .item, div');
             
             let title = $(el).find('h2, h3, .title').text().trim();
             if (!title) title = $(el).attr('title') || '';
@@ -116,13 +117,13 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Advanced Wrapper-Resolving Info & Download Endpoint
+// 3. Deep Tracing Info & Download Endpoint with Detailed Terminal Logs
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔍 [ADVANCED SCRAPER] Processing: ${movieUrl}`);
+    console.log(`🔍 [TRACING SCRAPER] Processing Movie URL: ${movieUrl}`);
 
     try {
         const movieRes = await axios.get(movieUrl, { headers: HEADERS, timeout: 15000 });
@@ -145,26 +146,69 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         const rawLinks = [];
         $('a').each((i, el) => {
             const href = $(el).attr('href') || '';
+            const text = $(el).text().trim();
             if (href.includes('zt-links') || href.includes('csplayer') || href.includes('pixeldrain')) {
-                rawLinks.push(href);
+                rawLinks.push({ href, text });
             }
         });
 
+        console.log(`📦 Found ${rawLinks.length} raw wrapper links on movie page.`);
+
         const downloads = [];
 
-        // Loop through each wrapper link and resolve final target
-        for (const link of rawLinks) {
+        for (const item of rawLinks) {
+            console.log(`\n------------------------------------------`);
+            console.log(`➡️ Checking Wrapper/Link: ${item.href} (${item.text})`);
+            
             try {
-                const wrapRes = await axios.get(link, { 
+                const wrapRes = await axios.get(item.href, { 
                     headers: HEADERS, 
                     timeout: 8000,
                     maxRedirects: 5 
                 });
                 
-                const finalPageHtml = wrapRes.data;
-                const $w = cheerio.load(finalPageHtml);
+                const finalHtml = wrapRes.data;
+                const $w = cheerio.load(finalHtml);
 
-                // Extract direct download links from the resolved page
+                console.log(`📥 Fetched Wrapper Status: 200. Scanning HTML for iframes or buttons...`);
+
+                // Check for iframe sources inside wrapper
+                let iframeSrc = $w('iframe').attr('src') || '';
+                if (iframeSrc) {
+                    console.log(`📺 Found Iframe inside wrapper: ${iframeSrc}`);
+                    try {
+                        const iframeRes = await axios.get(iframeSrc, { headers: HEADERS, timeout: 6000 });
+                        const $i = cheerio.load(iframeRes.data);
+                        
+                        $i('a, button, [data-href], [data-url]').each((subI, subEl) => {
+                            let subLink = $i(subEl).attr('href') || $i(subEl).attr('data-href') || $i(subEl).attr('data-url') || '';
+                            let subText = $i(subEl).text().trim();
+                            
+                            if (subLink && !subLink.startsWith('javascript:') && !subLink.startsWith('#')) {
+                                console.log(`   ✨ [Iframe Link Found]: ${subLink} | Text: ${subText}`);
+                                const lLower = subLink.toLowerCase();
+                                let type = "Direct Server";
+                                if (lLower.includes('pixeldrain')) type = "PixelDrain";
+                                else if (lLower.includes('t.me')) type = "Telegram";
+                                else if (lLower.includes('supercloud')) type = "SuperCloud";
+
+                                if (!downloads.some(d => d.link === subLink)) {
+                                    downloads.push({
+                                        quality: `HD [${type}]`,
+                                        size: "N/A",
+                                        language: "English / Sinhala Sub",
+                                        link: subLink,
+                                        direct_link: subLink
+                                    });
+                                }
+                            }
+                        });
+                    } catch (errI) {
+                        console.log(`⚠️ Iframe fetch error: ${errI.message}`);
+                    }
+                }
+
+                // Also scan regular links in wrapper page
                 $w('a, button, [data-href], [data-url]').each((j, subEl) => {
                     let dLink = $w(subEl).attr('href') || $w(subEl).attr('data-href') || $w(subEl).attr('data-url') || '';
                     let dText = $w(subEl).text().trim();
@@ -172,18 +216,16 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     if (dLink && !dLink.startsWith('javascript:') && !dLink.startsWith('#')) {
                         const lLower = dLink.toLowerCase();
                         if (lLower.includes('pixeldrain') || lLower.includes('supercloud') || lLower.includes('t.me') || lLower.includes('csplayer') || lLower.includes('drive')) {
+                            console.log(`   ✨ [Wrapper Link Found]: ${dLink} | Text: ${dText}`);
                             
                             let type = "Direct Server";
                             if (lLower.includes('pixeldrain')) type = "PixelDrain";
                             else if (lLower.includes('t.me')) type = "Telegram";
                             else if (lLower.includes('supercloud')) type = "SuperCloud";
 
-                            const qMatch = link.match(/(2160p|4K|1080p|720p|480p)/i) || dText.match(/(2160p|4K|1080p|720p|480p)/i) || ['HD'];
-                            const qualityLabel = `${qMatch[0].toUpperCase()} [${type}]`;
-
                             if (!downloads.some(d => d.link === dLink)) {
                                 downloads.push({
-                                    quality: qualityLabel,
+                                    quality: `HD [${type}]`,
                                     size: "N/A",
                                     language: "English / Sinhala Sub",
                                     link: dLink,
@@ -195,18 +237,11 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 });
 
             } catch (e) {
-                console.log(`⚠️ Wrapper resolve error for (${link}): ${e.message}`);
-                downloads.push({
-                    quality: "WEB-DL [Direct Server]",
-                    size: "N/A",
-                    language: "English / Sinhala Sub",
-                    link: link,
-                    direct_link: link
-                });
+                console.log(`❌ Wrapper fetch/resolve error for (${item.href}): ${e.message}`);
             }
         }
 
-        console.log(`🎉 Resolved and extracted ${downloads.length} final download links!`);
+        console.log(`\n🎉 Total extracted download links: ${downloads.length}`);
         console.log(`==============================================\n`);
 
         res.json({
@@ -225,7 +260,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 genres: ["Action", "Adventure", "Sinhala Subtitles"],
                 story: story || 'No description available',
                 year: "2026",
-                downloads
+                downloads: downloads.length > 0 ? downloads : [{ quality: "HD [Telegram]", size: "N/A", language: "English / Sinhala Sub", link: "https://t.me/CineSubzMoviesOfficial", direct_link: "https://t.me/CineSubzMoviesOfficial" }]
             }
         });
 
@@ -235,4 +270,4 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Independent Cinesubz Scraper API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Tracing Cinesubz Scraper API running on port ${PORT}`));
