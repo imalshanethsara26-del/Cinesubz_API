@@ -44,7 +44,7 @@ function getChromeExecutablePath() {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ PUPPETEER RESOLVER API is Live 🚀",
+        message: "IMALSHA CINESUBZ BOT-READY API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -144,66 +144,81 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Helper function using Puppeteer to bypass timer and extract real download links
-async function resolveZtLink(page, ztUrl) {
+// Advanced Resolver: Clicks "Direct Download" inside csplayer to get real final link
+async function resolveZtLinkAndClickDownload(page, ztUrl) {
     try {
-        console.log(`\n🔍 [PUPPETEER] Navigating to wrapper: ${ztUrl}`);
+        console.log(`\n🔍 [RESOLVER] Navigating to wrapper: ${ztUrl}`);
         await page.goto(ztUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
-        // Wait for timer to finish and click "Go to Download Page" button
-        for (let attempt = 1; attempt <= 4; attempt++) {
-            await new Promise(r => setTimeout(r, 1500));
-
+        // Step 1: Click "Go to Download Page" on zt-links page
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            await new Promise(r => setTimeout(r, 1200));
             const clicked = await page.evaluate(() => {
                 const btns = Array.from(document.querySelectorAll('a, button, div.btn'));
                 const target = btns.find(b => {
                     const text = (b.innerText || '').toUpperCase();
                     return text.includes('GO TO DOWNLOAD') || text.includes('DOWNLOAD PAGE') || text.includes('CLICK HERE');
                 });
-                if (target) {
-                    target.click();
+                if (target) { target.click(); return true; }
+                return false;
+            });
+            if (clicked) break;
+        }
+
+        try {
+            await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 6000 });
+        } catch (e) {}
+
+        console.log(`🌐 Landed on Player Page: ${page.url()}`);
+
+        // Step 2: On csplayer page, find and click "Direct Download (New)" or "Direct Download 1"
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            await new Promise(r => setTimeout(r, 1500));
+
+            const clickedDownloadBtn = await page.evaluate(() => {
+                const anchors = Array.from(document.querySelectorAll('a, button, div'));
+                const dlBtn = anchors.find(a => {
+                    const txt = (a.innerText || '').toUpperCase();
+                    return txt.includes('DIRECT DOWNLOAD') || txt.includes('DOWNLOAD (NEW)');
+                });
+                if (dlBtn) {
+                    dlBtn.click();
                     return true;
                 }
                 return false;
             });
 
-            if (clicked) {
-                console.log(`✨ Clicked download button on attempt ${attempt}`);
+            if (clickedDownloadBtn) {
+                console.log(`✨ Clicked Direct Download button on player page!`);
                 break;
             }
         }
 
-        // Wait for navigation to csplayer / final download space
-        try {
-            await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 6000 });
-        } catch (e) {}
+        // Wait a moment for redirect or new link generation
+        await new Promise(r => setTimeout(r, 2000));
 
-        const finalPageUrl = page.url();
-        console.log(`🌐 Final Landed URL: ${finalPageUrl}`);
-
-        // Extract direct download links present on the final page
-        const directLinks = await page.evaluate(() => {
-            const anchors = Array.from(document.querySelectorAll('a'));
-            const links = [];
-            anchors.forEach(a => {
-                const href = a.href || '';
-                const text = (a.innerText || '').trim();
-                if (href && !href.startsWith('javascript:') && !href.startsWith('#')) {
-                    links.push({ href, text });
-                }
-            });
-            return links;
+        let finalDirectUrl = page.url();
+        
+        // If page didn't redirect, check if any direct anchor appeared
+        const extractedHref = await page.evaluate(() => {
+            const downloadAnchor = document.querySelector('a[href*="server"], a[href*="dl."], a[href*="pixeldrain"], a[href*="storage"]');
+            return downloadAnchor ? downloadAnchor.href : null;
         });
 
-        return directLinks;
+        if (extractedHref && !extractedHref.includes('csplayer2.space')) {
+            finalDirectUrl = extractedHref;
+        }
+
+        console.log(`✨ [FINAL REAL LINK]: ${finalDirectUrl}`);
+        return finalDirectUrl;
 
     } catch (err) {
         console.error(`❌ [RESOLVER ERROR]: ${err.message}`);
-        return [];
+        return ztUrl;
     }
 }
 
-// 3. Info & Download Endpoint with Puppeteer Resolution
+// 3. Info & Download Endpoint with Deep Click Resolution
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -263,35 +278,31 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         const downloads = [];
 
         for (const item of rawZtLinks) {
-            const resolvedLinks = await resolveZtLink(page, item.href);
+            const realDownloadLink = await resolveZtLinkAndClickDownload(page, item.href);
             
-            resolvedLinks.forEach(dl => {
-                const lLower = dl.href.toLowerCase();
-                if (lLower.includes('pixeldrain') || lLower.includes('supercloud') || lLower.includes('t.me') || lLower.includes('drive')) {
-                    let type = "Direct Server";
-                    if (lLower.includes('pixeldrain')) type = "PixelDrain";
-                    else if (lLower.includes('t.me')) type = "Telegram";
-                    else if (lLower.includes('supercloud')) type = "SuperCloud";
+            const lLower = realDownloadLink.toLowerCase();
+            let type = "Direct Server";
+            if (lLower.includes('pixeldrain')) type = "PixelDrain";
+            else if (lLower.includes('t.me')) type = "Telegram";
+            else if (lLower.includes('supercloud')) type = "SuperCloud";
 
-                    const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p)/i) || ['HD'];
-                    const qualityLabel = `${qMatch[0].toUpperCase()} [${type}]`;
+            const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p)/i) || ['HD'];
+            const qualityLabel = `${qMatch[0].toUpperCase()} [${type}]`;
 
-                    if (!downloads.some(d => d.link === dl.href)) {
-                        downloads.push({
-                            quality: qualityLabel,
-                            size: "N/A",
-                            language: "English / Sinhala Sub",
-                            link: dl.href,
-                            direct_link: dl.href
-                        });
-                    }
-                }
-            });
+            if (!downloads.some(d => d.link === realDownloadLink)) {
+                downloads.push({
+                    quality: qualityLabel,
+                    size: "N/A",
+                    language: "English / Sinhala Sub",
+                    link: realDownloadLink,
+                    direct_link: realDownloadLink
+                });
+            }
         }
 
         await browser.close();
 
-        console.log(`🎉 Successfully extracted ${downloads.length} real download links!`);
+        console.log(`🎉 Successfully extracted ${downloads.length} real direct download links for bot!`);
         console.log(`==============================================\n`);
 
         res.json({
@@ -321,4 +332,4 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Puppeteer Cinesubz API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Bot-Ready Cinesubz API running on port ${PORT}`));
