@@ -44,7 +44,7 @@ function getChromeExecutablePath() {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ FULL CLICK & INTERCEPT API is Live 🚀",
+        message: "IMALSHA CINESUBZ DEEP-SCRAPER API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -144,79 +144,68 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Advanced Resolver: Clicks both wrapper button and player download button while capturing responses
-async function resolveZtLinkAndCaptureJson(page, ztUrl) {
+// Deep Scraper: Goes inside zt-links, clicks button, lands on csplayer, and extracts ALL embedded links
+async function scrapeCsPlayerPage(page, ztUrl) {
     try {
-        console.log(`\n🔍 [RESOLVER] Navigating to wrapper: ${ztUrl}`);
-        
-        let interceptedPayload = null;
-
-        const responseListener = async (response) => {
-            const reqUrl = response.url();
-            try {
-                const json = await response.json();
-                if (json && (json.file_name || json.links || json.download || JSON.stringify(json).includes('mp4') || JSON.stringify(json).includes('server'))) {
-                    interceptedPayload = json;
-                    console.log(`🎯 [INTERCEPTED JSON]:`, reqUrl);
-                }
-            } catch (e) {}
-        };
-
-        page.on('response', responseListener);
-
+        console.log(`\n------------------------------------------`);
+        console.log(`🔍 [DEEP SCRAPER] Navigating to wrapper: ${ztUrl}`);
         await page.goto(ztUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
 
-        // Wait for timer to finish
-        await new Promise(r => setTimeout(r, 3000));
+        // Wait for timer on wrapper page
+        await new Promise(r => setTimeout(r, 3500));
 
-        // Step 1: Click "Go to Download Page"
-        await page.evaluate(() => {
+        // Click "Go to Download Page"
+        const clickedGo = await page.evaluate(() => {
             const elements = Array.from(document.querySelectorAll('a, button, div, span'));
             const target = elements.find(el => {
                 const txt = (el.innerText || '').toUpperCase();
                 return txt.includes('GO TO DOWNLOAD') || txt.includes('DOWNLOAD PAGE');
             });
-            if (target) target.click();
+            if (target) {
+                target.click();
+                return true;
+            }
+            return false;
         });
+
+        console.log(`✨ Clicked 'Go to Download Page': ${clickedGo}`);
 
         try {
-            await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 8000 });
-        } catch (e) {}
-
-        // Wait for player page to load
-        await new Promise(r => setTimeout(r, 2000));
-
-        // Step 2: Click "Direct Download (New)" inside csplayer page to trigger final link/JSON
-        await page.evaluate(() => {
-            const elements = Array.from(document.querySelectorAll('a, button, div'));
-            const target = elements.find(el => {
-                const txt = (el.innerText || '').toUpperCase();
-                return txt.includes('DIRECT DOWNLOAD') || txt.includes('DOWNLOAD (NEW)');
-            });
-            if (target) target.click();
-        });
-
-        // Wait for background requests/redirections after clicking
-        await new Promise(r => setTimeout(r, 3500));
-
-        page.off('response', responseListener);
-
-        if (interceptedPayload) {
-            return { type: 'json', data: interceptedPayload };
+            await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 10000 });
+        } catch (e) {
+            console.log(`⚠️ Navigation event note: ${e.message}`);
         }
 
-        // Fallback: extract direct links if JSON wasn't intercepted
-        const currentUrl = page.url();
-        const realDirectLinks = await page.evaluate(() => {
-            const anchors = Array.from(document.querySelectorAll('a'));
-            return anchors.map(a => a.href).filter(h => h && (h.includes('/server') || h.includes('pixeldrain') || h.includes('ext=mp4')));
+        const playerUrl = page.url();
+        console.log(`🌐 Landed on Player/CSPlayer Page: ${playerUrl}`);
+
+        // Wait for player page content to render fully
+        await new Promise(r => setTimeout(r, 3000));
+
+        // Extract ALL links and buttons inside the csplayer page
+        const extractedLinks = await page.evaluate(() => {
+            const elements = Array.from(document.querySelectorAll('a, button, [data-href], [data-url]'));
+            const list = [];
+            elements.forEach(el => {
+                const href = el.href || el.getAttribute('data-href') || el.getAttribute('data-url') || '';
+                const text = (el.innerText || el.textContent || '').trim();
+                if (href && !href.startsWith('javascript:') && !href.startsWith('#')) {
+                    list.push({ href, text });
+                }
+            });
+            return list;
         });
 
-        return { type: 'links', data: realDirectLinks.length > 0 ? realDirectLinks : [currentUrl] };
+        console.log(`📦 Found ${extractedLinks.length} total links inside csplayer page:`);
+        extractedLinks.forEach((item, index) => {
+            console.log(`   [${index + 1}] Text: "${item.text.replace(/\n/g, ' ')}" --> Link: ${item.href}`);
+        });
+
+        return extractedLinks;
 
     } catch (err) {
-        console.error(`❌ [RESOLVER ERROR]: ${err.message}`);
-        return { type: 'links', data: [ztUrl] };
+        console.error(`❌ [DEEP SCRAPER ERROR for ${ztUrl}]: ${err.message}`);
+        return [];
     }
 }
 
@@ -256,7 +245,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         });
 
-        console.log(`📦 Found ${rawZtLinks.length} wrapper links. Launching Puppeteer browser...`);
+        console.log(`📦 Found ${rawZtLinks.length} wrapper zt-links on movie page. Launching Puppeteer...`);
 
         const chromePath = getChromeExecutablePath();
         browser = await puppeteer.launch({
@@ -280,44 +269,38 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         const downloads = [];
 
         for (const item of rawZtLinks) {
-            const result = await resolveZtLinkAndCaptureJson(page, item.href);
+            const playerLinks = await scrapeCsPlayerPage(page, item.href);
             
-            if (result.type === 'json') {
-                downloads.push({
-                    quality: item.text || "HD [Direct Server]",
-                    size: result.data.file_size || "N/A",
-                    language: "English / Sinhala Sub",
-                    raw_json: result.data,
-                    link: result.data.download_url || result.data.url || item.href,
-                    direct_link: result.data.download_url || result.data.url || item.href
-                });
-            } else if (result.type === 'links' && Array.isArray(result.data)) {
-                result.data.forEach(link => {
-                    const lLower = link.toLowerCase();
+            playerLinks.forEach(dl => {
+                const lLower = dl.href.toLowerCase();
+                const tUpper = dl.text.toUpperCase();
+
+                if (lLower.includes('/server') || lLower.includes('pixeldrain') || lLower.includes('ext=mp4') || lLower.includes('t.me') || lLower.includes('drive.csplayer')) {
                     let type = "Direct Server";
                     if (lLower.includes('pixeldrain')) type = "PixelDrain";
                     else if (lLower.includes('t.me')) type = "Telegram";
                     else if (lLower.includes('supercloud')) type = "SuperCloud";
+                    else if (lLower.includes('csplayer')) type = "CSPlayer Direct";
 
-                    const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p)/i) || ['HD'];
+                    const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p)/i) || dl.text.match(/(2160p|4K|1080p|720p|480p)/i) || ['HD'];
                     const qualityLabel = `${qMatch[0].toUpperCase()} [${type}]`;
 
-                    if (!downloads.some(d => d.link === link)) {
+                    if (!downloads.some(d => d.link === dl.href)) {
                         downloads.push({
                             quality: qualityLabel,
                             size: "N/A",
                             language: "English / Sinhala Sub",
-                            link: link,
-                            direct_link: link
+                            link: dl.href,
+                            direct_link: dl.href
                         });
                     }
-                });
-            }
+                }
+            });
         }
 
         await browser.close();
 
-        console.log(`🎉 Successfully processed downloads with full click & interception!`);
+        console.log(`\n🎉 Successfully extracted ${downloads.length} unique download links from csplayer pages!`);
         console.log(`==============================================\n`);
 
         res.json({
@@ -347,4 +330,4 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Full Interceptor Cinesubz API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Deep Scraper Cinesubz API running on port ${PORT}`));
