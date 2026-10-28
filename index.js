@@ -1,7 +1,6 @@
 const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
-const puppeteer = require('puppeteer');
 const cors = require('cors');
 
 const app = express();
@@ -112,81 +111,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 🚀 Ultra-Robust Puppeteer Resolver for CSPlayer Timer & SuperCloud Link Extraction
-async function resolveRealDownloadUrl(csPlayerUrl) {
-    let finalUrl = csPlayerUrl;
-    let browser = null;
-    try {
-        browser = await puppeteer.launch({
-            headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-        });
-        const page = await browser.newPage();
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
-
-        // Listen to all network requests to catch supercloud token URL instantly
-        page.on('request', req => {
-            const url = req.url();
-            if (url.includes('supercloud') || url.includes('pixeldrain') || url.includes('token=')) {
-                if (!url.includes('csplayer2.space')) {
-                    finalUrl = url;
-                }
-            }
-        });
-
-        await page.goto(csPlayerUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-
-        // ⏳ Wait 7 seconds for the CSPlayer timer to fully expire and unlock the download link
-        await new Promise(r => setTimeout(r, 7000));
-
-        // Check if page automatically redirected
-        if (page.url() !== csPlayerUrl && !page.url().includes('csplayer2.space')) {
-            return page.url();
-        }
-
-        // Extract the updated 'href' from the Direct Download button after timer finishes
-        const buttonHref = await page.evaluate(() => {
-            const anchors = Array.from(document.querySelectorAll('a'));
-            const target = anchors.find(a => {
-                const txt = (a.innerText || '').toLowerCase();
-                return txt.includes('direct download') || txt.includes('download');
-            });
-            return target ? target.href : null;
-        });
-
-        if (buttonHref && !buttonHref.includes('csplayer2.space') && buttonHref.startsWith('http')) {
-            finalUrl = buttonHref;
-        } else {
-            // Try clicking the button if href wasn't direct
-            const clicked = await page.evaluate(() => {
-                const elements = Array.from(document.querySelectorAll('a, button, div'));
-                const btn = elements.find(el => {
-                    const txt = (el.innerText || '').toLowerCase();
-                    return txt.includes('direct download') || txt.includes('download');
-                });
-                if (btn) {
-                    btn.click();
-                    return true;
-                }
-                return false;
-            });
-
-            if (clicked) {
-                await new Promise(r => setTimeout(r, 4000));
-                if (page.url() !== csPlayerUrl && !page.url().includes('csplayer2.space')) {
-                    finalUrl = page.url();
-                }
-            }
-        }
-    } catch (err) {
-        console.log(`⚠️ Puppeteer resolver error: ${err.message}`);
-    } finally {
-        if (browser) await browser.close();
-    }
-    return finalUrl;
-}
-
-// 3. Info & Download Endpoint
+// 3. Info & Download Endpoint (Direct ZT-Links & External Server Scraping)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     res.setTimeout(60000, () => {
         if (!res.headersSent) {
@@ -198,7 +123,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔥 [ULTIMATE API DL] Processing Movie: ${movieUrl}`);
+    console.log(`🔥 [DIRECT SCRAPE API] Processing Movie: ${movieUrl}`);
 
     try {
         const movieRes = await axios.get(movieUrl, { headers: HEADERS, timeout: 45000 });
@@ -238,74 +163,65 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         });
 
         const downloads = [];
-        const rawLinks = [];
+        const rawZtLinks = [];
 
+        // Collect all zt-links or direct download anchors from the main movie page
         $('a').each((i, el) => {
             const href = $(el).attr('href') || '';
             const text = $(el).text().trim();
-            const parentText = $(el).closest('div, p, li').text();
-
-            if (href.includes('pixeldrain.com') || href.includes('t.me/') || href.includes('zt-links') || href.includes('drive.csplayer')) {
-                rawLinks.push({ href, text: text || parentText });
+            if (href.includes('zt-links') || href.includes('pixeldrain.com') || href.includes('t.me/')) {
+                rawZtLinks.push({ href, text });
             }
         });
 
-        console.log(`📦 Found ${rawLinks.length} raw links. Resolving SuperCloud tokens via Puppeteer...`);
+        console.log(`📦 Found ${rawZtLinks.length} wrapper/download links. Deep scanning...`);
 
-        for (const item of rawLinks) {
-            let finalLink = item.href;
-            let qName = "HD";
+        for (const item of rawZtLinks) {
+            try {
+                let qName = "HD";
+                if (item.text.match(/480p/i)) qName = "480p";
+                else if (item.text.match(/720p/i)) qName = "720p";
+                else if (item.text.match(/1080p/i)) qName = "1080p";
+                else if (item.text.match(/2160p|4k/i)) qName = "2160p";
 
-            if (item.text.match(/480p/i)) qName = "480p";
-            else if (item.text.match(/720p/i)) qName = "720p";
-            else if (item.text.match(/1080p/i)) qName = "1080p";
-            else if (item.text.match(/2160p|4k/i)) qName = "2160p";
+                if (item.href.includes('pixeldrain.com') || item.href.includes('t.me/')) {
+                    let typeLabel = item.href.includes('pixeldrain') ? "PixelDrain" : "Telegram Bot";
+                    downloads.push({
+                        quality: `WEB-DL ${qName} [${typeLabel}]`,
+                        size: "N/A",
+                        language: "English",
+                        link: item.href
+                    });
+                } else if (item.href.includes('zt-links')) {
+                    // Visit zt-links page to see what external links are hidden inside
+                    const ztRes = await axios.get(item.href, { headers: HEADERS, timeout: 30000 });
+                    const $zt = cheerio.load(ztRes.data);
 
-            if (item.href.includes('zt-links') || item.href.includes('drive.csplayer')) {
-                try {
-                    let portalUrl = item.href;
-                    if (item.href.includes('zt-links')) {
-                        const ztRes = await axios.get(item.href, { headers: HEADERS, timeout: 30000 });
-                        const $zt = cheerio.load(ztRes.data);
-                        $zt('a').each((_, ztel) => {
-                            const zh = $zt(ztel).attr('href') || '';
-                            if (zh.includes('drive.csplayer') || zh.includes('/server')) portalUrl = zh;
-                        });
-                    }
+                    $zt('a').each((_, ztel) => {
+                        const zh = $zt(ztel).attr('href') || '';
+                        const ztxt = $zt(ztel).text().trim();
 
-                    if (portalUrl.includes('/server')) {
-                        const parsedUrl = new URL(portalUrl);
-                        const apiUrl = `https://drive.csplayer2.space/api/download-data${parsedUrl.pathname}${parsedUrl.search}`;
-                        const apiRes = await axios.get(apiUrl, { headers: HEADERS, timeout: 30000 });
-                        if (apiRes.data && apiRes.data.redirect) {
-                            let red = apiRes.data.redirect;
-                            if (red.startsWith('/')) red = `https://drive.csplayer2.space${red}`;
-                            portalUrl = red;
+                        if (zh.includes('supercloud') || zh.includes('pixeldrain') || zh.includes('.mp4') || zh.includes('token=')) {
+                            let typeLabel = "Direct High-Speed Server";
+                            if (zh.includes('pixeldrain')) typeLabel = "PixelDrain";
+                            
+                            if (!downloads.some(d => d.link === zh)) {
+                                downloads.push({
+                                    quality: `WEB-DL ${qName} [${typeLabel}]`,
+                                    size: "N/A",
+                                    language: "English",
+                                    link: zh
+                                });
+                            }
                         }
-                    }
-
-                    console.log(`🖱️ Unlocking token for ${qName} from portal: ${portalUrl}`);
-                    finalLink = await resolveRealDownloadUrl(portalUrl);
-                } catch (e) {
-                    console.log(`⚠️ Resolution error: ${e.message}`);
+                    });
                 }
-            }
-
-            let typeLabel = "Direct High-Speed Server";
-            if (finalLink.includes('pixeldrain')) typeLabel = "PixelDrain";
-            else if (finalLink.includes('t.me/')) typeLabel = "Telegram Bot";
-
-            if (!downloads.some(d => d.link === finalLink)) {
-                downloads.push({
-                    quality: `WEB-DL ${qName} [${typeLabel}]`,
-                    size: "N/A",
-                    language: "English",
-                    link: finalLink
-                });
+            } catch (innerErr) {
+                console.log(`⚠️ Scan error: ${innerErr.message}`);
             }
         }
 
-        console.log(`🎉 Successfully generated ${downloads.length} final links!`);
+        console.log(`🎉 Successfully extracted ${downloads.length} links directly!`);
         console.log(`==============================================\n`);
 
         if (!res.headersSent) {
