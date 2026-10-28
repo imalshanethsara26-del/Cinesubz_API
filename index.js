@@ -15,7 +15,7 @@ const HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 };
 
-// Render එකේ Chrome Executable path එක හොයාගැනීම
+// Render Chrome Path Finder
 function getChromeExecutablePath() {
     const possiblePaths = [
         '/opt/render/project/src/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome',
@@ -44,7 +44,7 @@ function getChromeExecutablePath() {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ ULTIMATE SCRAPER API is Live 🚀",
+        message: "IMALSHA CINESUBZ ULTIMATE JSON-INTERCEPTOR API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -138,10 +138,29 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Helper Function: Navigation & Extraction for csplayer
-async function extractDirectLinksFromZt(page, ztUrl) {
+// Advanced Interceptor: Captures background JSON API responses and full DOM data from csplayer
+async function resolveCsPlayerCompleteJson(page, ztUrl) {
     try {
         console.log(`\n🔍 [RESOLVER] Opening Wrapper: ${ztUrl}`);
+        
+        let capturedApiResponse = null;
+
+        const responseListener = async (response) => {
+            const reqUrl = response.url();
+            const contentType = response.headers()['content-type'] || '';
+            if (contentType.includes('application/json') || reqUrl.includes('api') || reqUrl.includes('get') || reqUrl.includes('json')) {
+                try {
+                    const json = await response.json();
+                    if (json && (json.file_name || json.file_size || json.download_url || JSON.stringify(json).includes('mp4') || JSON.stringify(json).includes('server'))) {
+                        capturedApiResponse = json;
+                        console.log(`🎯 [INTERCEPTED CSPLAYER API JSON]:`, reqUrl);
+                    }
+                } catch (e) {}
+            }
+        };
+
+        page.on('response', responseListener);
+
         await page.goto(ztUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
 
         // Wait for timer
@@ -161,32 +180,49 @@ async function extractDirectLinksFromZt(page, ztUrl) {
             await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 8000 });
         } catch (e) {}
 
-        await new Promise(r => setTimeout(r, 2500));
+        // Wait for csplayer background fetches to complete
+        await new Promise(r => setTimeout(r, 4000));
 
-        console.log(`🌐 Currently on Player Page: ${page.url()}`);
+        page.off('response', responseListener);
 
-        // Scan all links present on csplayer page
-        const foundLinks = await page.evaluate(() => {
-            const anchors = Array.from(document.querySelectorAll('a'));
-            return anchors.map(a => ({
-                href: a.href || '',
-                text: (a.innerText || '').trim()
-            })).filter(item => item.href && !item.href.startsWith('javascript:'));
-        });
+        // Extract DOM data as well as backup
+        const domData = await page.evaluate(() => {
+            const bodyText = document.body.innerText || '';
+            const lines = bodyText.split('\n').map(l => l.trim()).filter(Boolean);
 
-        const validDirects = [];
-        foundLinks.forEach(item => {
-            const lLower = item.href.toLowerCase();
-            if (lLower.includes('drive.csplayer') || lLower.includes('/server') || lLower.includes('pixeldrain') || lLower.includes('ext=mp4')) {
-                validDirects.push(item.href);
+            let detectedFileName = 'N/A';
+            let detectedFileSize = 'N/A';
+
+            for (let i = 0; i < lines.length; i++) {
+                if (lines[i].toLowerCase().includes('file name') && lines[i + 1]) {
+                    detectedFileName = lines[i + 1];
+                }
+                if (lines[i].toLowerCase().includes('file size') && lines[i + 1]) {
+                    detectedFileSize = lines[i + 1];
+                }
             }
+
+            const anchors = Array.from(document.querySelectorAll('a, button'));
+            const buttonsData = anchors.map(a => ({
+                href: a.href || a.getAttribute('data-href') || '',
+                text: (a.innerText || a.textContent || '').trim()
+            })).filter(item => item.href && !item.href.startsWith('javascript:'));
+
+            return {
+                fileName: detectedFileName,
+                fileSize: detectedFileSize,
+                buttons: buttonsData
+            };
         });
 
-        return validDirects.length > 0 ? validDirects : [page.url()];
+        return {
+            apiJson: capturedApiResponse,
+            domInfo: domData
+        };
 
     } catch (err) {
         console.error(`❌ Error resolving ${ztUrl}: ${err.message}`);
-        return [ztUrl];
+        return { apiJson: null, domInfo: { fileName: 'N/A', fileSize: 'N/A', buttons: [] } };
     }
 }
 
@@ -250,33 +286,53 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         const downloads = [];
 
         for (const item of rawZtLinks) {
-            const resolvedLinks = await extractDirectLinksFromZt(page, item.href);
+            const result = await resolveCsPlayerCompleteJson(page, item.href);
+            
+            // If API JSON was intercepted, include it
+            if (result.apiJson) {
+                downloads.push({
+                    quality: item.text || "HD [API JSON]",
+                    file_name: result.apiJson.file_name || result.domInfo.fileName,
+                    size: result.apiJson.file_size || result.domInfo.fileSize,
+                    language: "English / Sinhala Sub",
+                    raw_json: result.apiJson,
+                    link: result.apiJson.download_url || result.apiJson.url || item.href,
+                    direct_link: result.apiJson.download_url || result.apiJson.url || item.href
+                });
+            }
 
-            resolvedLinks.forEach(link => {
-                const lLower = link.toLowerCase();
-                let type = "Direct Server";
-                if (lLower.includes('pixeldrain')) type = "PixelDrain";
-                else if (lLower.includes('t.me')) type = "Telegram";
-                else if (lLower.includes('drive.csplayer') || lLower.includes('server')) type = "CSPlayer Direct";
+            // Process DOM buttons and links found inside csplayer
+            if (result.domInfo && result.domInfo.buttons.length > 0) {
+                result.domInfo.buttons.forEach(btn => {
+                    const lLower = btn.href.toLowerCase();
+                    if (lLower.includes('drive.csplayer') || lLower.includes('/server') || lLower.includes('pixeldrain') || lLower.includes('ext=mp4') || lLower.includes('t.me')) {
+                        let type = "Direct Server";
+                        if (lLower.includes('pixeldrain')) type = "PixelDrain";
+                        else if (lLower.includes('t.me')) type = "Telegram";
+                        else if (lLower.includes('drive.csplayer') || lLower.includes('server')) type = "CSPlayer Direct";
 
-                const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p)/i) || ['HD'];
-                const qualityLabel = `${qMatch[0].toUpperCase()} [${type}]`;
+                        const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p)/i) || btn.text.match(/(2160p|4K|1080p|720p|480p)/i) || ['HD'];
+                        const qualityLabel = `${qMatch[0].toUpperCase()} [${type}]`;
 
-                if (!downloads.some(d => d.link === link)) {
-                    downloads.push({
-                        quality: qualityLabel,
-                        size: "N/A",
-                        language: "English / Sinhala Sub",
-                        link: link,
-                        direct_link: link
-                    });
-                }
-            });
+                        if (!downloads.some(d => d.link === btn.href)) {
+                            downloads.push({
+                                quality: qualityLabel,
+                                file_name: result.domInfo.fileName,
+                                size: result.domInfo.fileSize,
+                                language: "English / Sinhala Sub",
+                                button_text: btn.text,
+                                link: btn.href,
+                                direct_link: btn.href
+                            });
+                        }
+                    }
+                });
+            }
         }
 
         await browser.close();
 
-        console.log(`🎉 Successfully extracted ${downloads.length} direct links!`);
+        console.log(`🎉 Successfully extracted data with interception and DOM parsing!`);
         console.log(`==============================================\n`);
 
         res.json({
@@ -295,7 +351,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 genres: ["Action", "Adventure", "Sinhala Subtitles"],
                 story: story || 'No description available',
                 year: "2026",
-                downloads: downloads.length > 0 ? downloads : [{ quality: "HD [Telegram]", size: "N/A", language: "English / Sinhala Sub", link: "https://t.me/CineSubzAdmin", direct_link: "https://t.me/CineSubzAdmin" }]
+                downloads: downloads.length > 0 ? downloads : [{ quality: "HD [Telegram]", file_name: "N/A", size: "N/A", language: "English / Sinhala Sub", link: "https://t.me/CineSubzAdmin", direct_link: "https://t.me/CineSubzAdmin" }]
             }
         });
 
@@ -306,4 +362,4 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Cinesubz Scraper API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Cinesubz Ultimate Scraper API running on port ${PORT}`));
