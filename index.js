@@ -112,7 +112,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Helper: Puppeteer resolver to catch SuperCloud / Direct download token links
+// 🚀 Ultra-Robust Puppeteer Resolver for CSPlayer Timer & SuperCloud Link Extraction
 async function resolveRealDownloadUrl(csPlayerUrl) {
     let finalUrl = csPlayerUrl;
     let browser = null;
@@ -124,54 +124,58 @@ async function resolveRealDownloadUrl(csPlayerUrl) {
         const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
 
-        // Track network requests to catch tokenized direct servers (supercloud, pixeldrain, etc.)
+        // Listen to all network requests to catch supercloud token URL instantly
         page.on('request', req => {
             const url = req.url();
-            if (url.includes('supercloud') || url.includes('pixeldrain') || url.includes('.mp4')) {
-                if (!url.includes('csplayer2.space/api')) {
+            if (url.includes('supercloud') || url.includes('pixeldrain') || url.includes('token=')) {
+                if (!url.includes('csplayer2.space')) {
                     finalUrl = url;
                 }
             }
         });
 
-        // Capture popup/new tab if any
-        browser.once('targetcreated', async target => {
-            try {
-                const newPage = await target.page();
-                if (newPage) {
-                    await newPage.waitForNavigation({ waitUntil: 'load', timeout: 5000 }).catch(() => {});
-                    const newUrl = newPage.url();
-                    if (newUrl && !newUrl.includes('csplayer2.space')) {
-                        finalUrl = newUrl;
-                    }
-                    await newPage.close();
-                }
-            } catch (e) {}
-        });
-
         await page.goto(csPlayerUrl, { waitUntil: 'networkidle2', timeout: 30000 });
 
-        // Wait for timer to finish
-        await new Promise(r => setTimeout(r, 5000));
+        // ⏳ Wait 7 seconds for the CSPlayer timer to fully expire and unlock the download link
+        await new Promise(r => setTimeout(r, 7000));
 
-        // Click Direct Download button automatically
-        const clicked = await page.evaluate(() => {
-            const elements = Array.from(document.querySelectorAll('a, button, div, span'));
-            const targetBtn = elements.find(el => {
-                const txt = (el.innerText || '').toUpperCase();
-                return txt.includes('DIRECT DOWNLOAD') || txt.includes('DOWNLOAD (NEW)');
+        // Check if page automatically redirected
+        if (page.url() !== csPlayerUrl && !page.url().includes('csplayer2.space')) {
+            return page.url();
+        }
+
+        // Extract the updated 'href' from the Direct Download button after timer finishes
+        const buttonHref = await page.evaluate(() => {
+            const anchors = Array.from(document.querySelectorAll('a'));
+            const target = anchors.find(a => {
+                const txt = (a.innerText || '').toLowerCase();
+                return txt.includes('direct download') || txt.includes('download');
             });
-            if (targetBtn) {
-                targetBtn.click();
-                return true;
-            }
-            return false;
+            return target ? target.href : null;
         });
 
-        if (clicked) {
-            await new Promise(r => setTimeout(r, 4000));
-            if (page.url() !== csPlayerUrl && !page.url().includes('csplayer2.space')) {
-                finalUrl = page.url();
+        if (buttonHref && !buttonHref.includes('csplayer2.space') && buttonHref.startsWith('http')) {
+            finalUrl = buttonHref;
+        } else {
+            // Try clicking the button if href wasn't direct
+            const clicked = await page.evaluate(() => {
+                const elements = Array.from(document.querySelectorAll('a, button, div'));
+                const btn = elements.find(el => {
+                    const txt = (el.innerText || '').toLowerCase();
+                    return txt.includes('direct download') || txt.includes('download');
+                });
+                if (btn) {
+                    btn.click();
+                    return true;
+                }
+                return false;
+            });
+
+            if (clicked) {
+                await new Promise(r => setTimeout(r, 4000));
+                if (page.url() !== csPlayerUrl && !page.url().includes('csplayer2.space')) {
+                    finalUrl = page.url();
+                }
             }
         }
     } catch (err) {
@@ -182,7 +186,7 @@ async function resolveRealDownloadUrl(csPlayerUrl) {
     return finalUrl;
 }
 
-// 3. Info & Download Endpoint (Chamindu style rich response)
+// 3. Info & Download Endpoint
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     res.setTimeout(60000, () => {
         if (!res.headersSent) {
@@ -194,7 +198,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔥 [CHAMINDU STYLE API] Processing Movie: ${movieUrl}`);
+    console.log(`🔥 [ULTIMATE API DL] Processing Movie: ${movieUrl}`);
 
     try {
         const movieRes = await axios.get(movieUrl, { headers: HEADERS, timeout: 45000 });
@@ -204,7 +208,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         const image = $('meta[property="og:image"]').attr('content') || '';
         const quality = $('.quality').first().text().trim() || 'WEB-DL';
         const rating = $('span.rating, .imdb-rate').first().text().trim() || 'N/A';
-        const director = $('span.director').text().trim() || $('a.director').text().trim() || 'N/A';
+        const director = $('span.director').text().trim() || 'N/A';
 
         let story = '';
         $('p').each((i, el) => {
@@ -223,7 +227,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         $('.cast-item, .person, .actor').each((i, el) => {
             const name = $(el).find('.name, h4').text().trim();
             const role = $(el).find('.role, .character').text().trim();
-            const img = $(el).find('img').attr('src') || $(el).find('img').attr('data-src') || '';
+            const img = $(el).find('img').attr('src') || '';
             if (name) cast.push({ name, role: role || 'Actor', image: img });
         });
 
@@ -233,21 +237,20 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             if (src) gallery.push(src);
         });
 
-        // Extracting all download links (PixelDrain, Telegram, Zt-links)
         const downloads = [];
         const rawLinks = [];
 
         $('a').each((i, el) => {
             const href = $(el).attr('href') || '';
             const text = $(el).text().trim();
-            const parentText = $(el).closest('.button-download, .download-links, div').text();
+            const parentText = $(el).closest('div, p, li').text();
 
             if (href.includes('pixeldrain.com') || href.includes('t.me/') || href.includes('zt-links') || href.includes('drive.csplayer')) {
                 rawLinks.push({ href, text: text || parentText });
             }
         });
 
-        console.log(`📦 Found ${rawLinks.length} raw download/wrapper links. Resolving...`);
+        console.log(`📦 Found ${rawLinks.length} raw links. Resolving SuperCloud tokens via Puppeteer...`);
 
         for (const item of rawLinks) {
             let finalLink = item.href;
@@ -260,7 +263,6 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
             if (item.href.includes('zt-links') || item.href.includes('drive.csplayer')) {
                 try {
-                    // First get portal link via API
                     let portalUrl = item.href;
                     if (item.href.includes('zt-links')) {
                         const ztRes = await axios.get(item.href, { headers: HEADERS, timeout: 30000 });
@@ -282,10 +284,10 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         }
                     }
 
-                    console.log(`🖱️ Resolving SuperCloud direct token link for ${qName}...`);
+                    console.log(`🖱️ Unlocking token for ${qName} from portal: ${portalUrl}`);
                     finalLink = await resolveRealDownloadUrl(portalUrl);
                 } catch (e) {
-                    console.log(`⚠️ Error resolving link: ${e.message}`);
+                    console.log(`⚠️ Resolution error: ${e.message}`);
                 }
             }
 
@@ -303,7 +305,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         }
 
-        console.log(`🎉 Successfully generated ${downloads.length} download options in Chamindu style!`);
+        console.log(`🎉 Successfully generated ${downloads.length} final links!`);
         console.log(`==============================================\n`);
 
         if (!res.headersSent) {
