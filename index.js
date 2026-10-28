@@ -1,7 +1,10 @@
 const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
+const puppeteer = require('puppeteer');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -9,15 +12,39 @@ const PORT = process.env.PORT || 8080;
 app.use(cors());
 
 const HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Referer': 'https://cinesubz.co/'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 };
 
-// Root Status Route
-app.get('/', (res) => {
+// Render එකේ Chrome Executable path එක හොයාගැනීම
+function getChromeExecutablePath() {
+    const possiblePaths = [
+        '/opt/render/project/src/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome',
+        '/opt/render/.cache/puppeteer/chrome/linux-127.0.6533.88/chrome-linux64/chrome',
+        process.env.PUPPETEER_EXECUTABLE_PATH
+    ];
+
+    for (const p of possiblePaths) {
+        if (p && fs.existsSync(p)) return p;
+    }
+
+    const baseCache = '/opt/render/project/src/.cache/puppeteer/chrome';
+    if (fs.existsSync(baseCache)) {
+        try {
+            const dirs = fs.readdirSync(baseCache);
+            for (const dir of dirs) {
+                const autoPath = path.join(baseCache, dir, 'chrome-linux64', 'chrome');
+                if (fs.existsSync(autoPath)) return autoPath;
+            }
+        } catch (e) {}
+    }
+    return undefined;
+}
+
+// Root Route
+app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ WP-JSON DIRECT API is Live 🚀",
+        message: "IMALSHA CINESUBZ ULTIMATE SCRAPER API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -51,11 +78,8 @@ app.get('/api/v1/cinesubz/latest', async (req, res) => {
             if (!img) img = '';
             if (img.startsWith('//')) img = 'https:' + img;
 
-            let quality = parent.find('.quality, .badge').text().trim();
-            if (!quality) quality = 'WEB-DL';
-
-            let rating = parent.find('.imdb-rate, .rating').text().trim();
-            if (!rating) rating = 'N/A';
+            let quality = parent.find('.quality, .badge').text().trim() || 'WEB-DL';
+            let rating = parent.find('.imdb-rate, .rating').text().trim() || 'N/A';
 
             if (href.includes('cinesubz.') && (href.includes('/movies/') || href.includes('/tvshows/')) && title.length > 2) {
                 title = title.replace(/\t|\n/g, '').trim();
@@ -97,11 +121,8 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
             if (!img) img = '';
             if (img.startsWith('//')) img = 'https:' + img;
 
-            let quality = parent.find('.quality, .badge').text().trim();
-            if (!quality) quality = 'WEB-DL';
-
-            let rating = parent.find('.imdb-rate, .rating').text().trim();
-            if (!rating) rating = 'N/A';
+            let quality = parent.find('.quality, .badge').text().trim() || 'WEB-DL';
+            let rating = parent.find('.imdb-rate, .rating').text().trim() || 'N/A';
 
             if (href.includes('cinesubz.') && (href.includes('/movies/') || href.includes('/tvshows/')) && title.length > 2) {
                 title = title.replace(/\t|\n/g, '').trim();
@@ -117,47 +138,68 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & WordPress JSON Deep Inspection Endpoint
+// Helper Function: Navigation & Extraction for csplayer
+async function extractDirectLinksFromZt(page, ztUrl) {
+    try {
+        console.log(`\n🔍 [RESOLVER] Opening Wrapper: ${ztUrl}`);
+        await page.goto(ztUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
+
+        // Wait for timer
+        await new Promise(r => setTimeout(r, 3500));
+
+        // Click "Go to Download Page"
+        await page.evaluate(() => {
+            const elements = Array.from(document.querySelectorAll('a, button, div, span'));
+            const target = elements.find(el => {
+                const txt = (el.innerText || '').toUpperCase();
+                return txt.includes('GO TO DOWNLOAD') || txt.includes('DOWNLOAD PAGE');
+            });
+            if (target) target.click();
+        });
+
+        try {
+            await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 8000 });
+        } catch (e) {}
+
+        await new Promise(r => setTimeout(r, 2500));
+
+        console.log(`🌐 Currently on Player Page: ${page.url()}`);
+
+        // Scan all links present on csplayer page
+        const foundLinks = await page.evaluate(() => {
+            const anchors = Array.from(document.querySelectorAll('a'));
+            return anchors.map(a => ({
+                href: a.href || '',
+                text: (a.innerText || '').trim()
+            })).filter(item => item.href && !item.href.startsWith('javascript:'));
+        });
+
+        const validDirects = [];
+        foundLinks.forEach(item => {
+            const lLower = item.href.toLowerCase();
+            if (lLower.includes('drive.csplayer') || lLower.includes('/server') || lLower.includes('pixeldrain') || lLower.includes('ext=mp4')) {
+                validDirects.push(item.href);
+            }
+        });
+
+        return validDirects.length > 0 ? validDirects : [page.url()];
+
+    } catch (err) {
+        console.error(`❌ Error resolving ${ztUrl}: ${err.message}`);
+        return [ztUrl];
+    }
+}
+
+// 3. Main Info & Download Endpoint
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔥 [WP-JSON DL] Processing Movie URL: ${movieUrl}`);
+    console.log(`🔥 [INFO DL] Processing Movie: ${movieUrl}`);
 
+    let browser = null;
     try {
-        // 1. Fetch WordPress REST API post data using slug
-        const urlObj = new URL(movieUrl);
-        const pathSegments = urlObj.pathname.split('/').filter(Boolean);
-        const slug = pathSegments[pathSegments.length - 1];
-
-        let wpLinks = [];
-        try {
-            const wpApiUrl = `https://cinesubz.net/wp-json/wp/v2/posts?slug=${slug}`;
-            console.log(`🔍 Fetching WordPress REST API: ${wpApiUrl}`);
-            const wpRes = await axios.get(wpApiUrl, { headers: HEADERS, timeout: 10000 });
-            
-            if (wpRes.data && Array.isArray(wpRes.data) && wpRes.data.length > 0) {
-                const post = wpRes.data[0];
-                console.log(`✨ Found WordPress Post ID: ${post.id}`);
-                
-                // Parse rendered HTML content inside WordPress post JSON
-                const renderedHtml = post.content.rendered || '';
-                const $wp = cheerio.load(renderedHtml);
-                
-                $wp('a').each((i, el) => {
-                    const href = $wp(el).attr('href') || '';
-                    const text = $wp(el).text().trim();
-                    if (href && !href.startsWith('#')) {
-                        wpLinks.push({ href, text });
-                    }
-                });
-            }
-        } catch (wpErr) {
-            console.log(`⚠️ WP REST API note: ${wpErr.message}`);
-        }
-
-        // 2. Also scrape the standard movie page HTML as backup/complement
         const movieRes = await axios.get(movieUrl, { headers: HEADERS, timeout: 15000 });
         const $ = cheerio.load(movieRes.data);
 
@@ -175,49 +217,66 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         });
 
-        const pageLinks = [];
+        const rawZtLinks = [];
         $('a').each((i, el) => {
             const href = $(el).attr('href') || '';
             const text = $(el).text().trim();
-            if (href) {
-                pageLinks.push({ href, text });
+            if (href.includes('zt-links')) {
+                rawZtLinks.push({ href, text });
             }
         });
 
-        // Combine links from WP JSON and movie page HTML
-        const allDiscoveredLinks = [...wpLinks, ...pageLinks];
-        console.log(`📦 Total discovered links from WordPress & Page: ${allDiscoveredLinks.length}`);
+        console.log(`📦 Found ${rawZtLinks.length} wrapper links. Launching Puppeteer...`);
+
+        const chromePath = getChromeExecutablePath();
+        browser = await puppeteer.launch({
+            headless: true,
+            executablePath: chromePath,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--no-first-run',
+                '--no-zygote',
+                '--single-process',
+                '--disable-gpu'
+            ]
+        });
+
+        const page = await browser.newPage();
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
 
         const downloads = [];
 
-        allDiscoveredLinks.forEach(item => {
-            const lLower = item.href.toLowerCase();
-            const tUpper = item.text.toUpperCase();
+        for (const item of rawZtLinks) {
+            const resolvedLinks = await extractDirectLinksFromZt(page, item.href);
 
-            // Check if it's a direct server, csplayer link, or pixeldrain/telegram
-            if (lLower.includes('drive.csplayer') || lLower.includes('/server') || lLower.includes('pixeldrain') || lLower.includes('ext=mp4') || lLower.includes('t.me') || lLower.includes('zt-links')) {
+            resolvedLinks.forEach(link => {
+                const lLower = link.toLowerCase();
                 let type = "Direct Server";
                 if (lLower.includes('pixeldrain')) type = "PixelDrain";
                 else if (lLower.includes('t.me')) type = "Telegram";
-                else if (lLower.includes('csplayer') || lLower.includes('server')) type = "CSPlayer Direct";
-                else if (lLower.includes('zt-links')) type = "Wrapper Link";
+                else if (lLower.includes('drive.csplayer') || lLower.includes('server')) type = "CSPlayer Direct";
 
                 const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p)/i) || ['HD'];
                 const qualityLabel = `${qMatch[0].toUpperCase()} [${type}]`;
 
-                if (!downloads.some(d => d.link === item.href)) {
+                if (!downloads.some(d => d.link === link)) {
                     downloads.push({
                         quality: qualityLabel,
                         size: "N/A",
                         language: "English / Sinhala Sub",
-                        link: item.href,
-                        direct_link: item.href
+                        link: link,
+                        direct_link: link
                     });
                 }
-            }
-        });
+            });
+        }
 
-        console.log(`🎉 Successfully filtered ${downloads.length} download links!`);
+        await browser.close();
+
+        console.log(`🎉 Successfully extracted ${downloads.length} direct links!`);
         console.log(`==============================================\n`);
 
         res.json({
@@ -241,9 +300,10 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         });
 
     } catch (err) {
+        if (browser) await browser.close();
         console.error(`❌ [SCRAPER ERROR]: ${err.message}`);
         res.status(500).json({ status: false, error: err.message });
     }
 });
 
-app.listen(PORT, () => console.log(`WP-JSON Direct Cinesubz API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Cinesubz Scraper API running on port ${PORT}`));
