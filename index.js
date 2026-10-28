@@ -111,7 +111,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint with API Response Inspector
+// 3. Info & Download Endpoint (Final Mapping using apiData.redirect)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     res.setTimeout(60000, () => {
         if (!res.headersSent) {
@@ -177,20 +177,25 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     const apiRes = await axios.get(apiUrl, { headers: HEADERS, timeout: 45000 });
                     const apiData = apiRes.data;
 
-                    // 🎯 මෙතැනින් API එකෙන් එන සම්පූර්ණ JSON ඩේටා එක ටර්මිනල් එකේ ප්‍රින්ට් වෙනවා
-                    console.log(`🎯 [CSPLAYER API RAW JSON RESPONSE]:`, JSON.stringify(apiData, null, 2));
-
-                    if (apiData) {
-                        let finalDownloadLink = apiData.download_url || apiData.url || apiData.link || apiData.file_url || serverLink;
+                    if (apiData && apiData.redirect) {
+                        let finalDownloadLink = apiData.redirect;
                         if (finalDownloadLink.startsWith('/')) {
                             finalDownloadLink = `https://drive.csplayer2.space${finalDownloadLink}`;
                         }
 
+                        // Extract file name from redirect path
+                        let fileName = 'N/A';
+                        try {
+                            const urlParts = finalDownloadLink.split('/');
+                            const lastPart = urlParts[urlParts.length - 1].split('?')[0];
+                            fileName = decodeURIComponent(lastPart);
+                        } catch (e) {}
+
                         const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p)/i) || ['HD'];
                         downloads.push({
-                            quality: `${qMatch[0].toUpperCase()} [Direct Server]`,
-                            file_name: apiData.file_name || apiData.filename || 'N/A',
-                            size: apiData.file_size || apiData.size || 'N/A',
+                            quality: `${qMatch[0].toUpperCase()} [CSPlayer Direct]`,
+                            file_name: fileName,
+                            size: "N/A",
                             language: "English / Sinhala Sub",
                             link: finalDownloadLink,
                             direct_link: finalDownloadLink
