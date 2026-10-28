@@ -32,7 +32,7 @@ app.get('/api/v1/cinesubz/latest', async (req, res) => {
         const pageNum = req.query.page || 1;
         const latestUrl = pageNum == 1 ? "https://cinesubz.co/" : `https://cinesubz.co/page/${pageNum}/`;
         
-        const response = await axios.get(latestUrl, { headers: HEADERS, timeout: 15000 });
+        const response = await axios.get(latestUrl, { headers: HEADERS, timeout: 30000 });
         const $ = cheerio.load(response.data);
         const results = [];
 
@@ -75,7 +75,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
         if (!query) return res.status(400).json({ status: false, message: "Search term required" });
 
         const searchUrl = "https://cinesubz.co/?s=" + encodeURIComponent(query);
-        const response = await axios.get(searchUrl, { headers: HEADERS, timeout: 10000 });
+        const response = await axios.get(searchUrl, { headers: HEADERS, timeout: 30000 });
         const $ = cheerio.load(response.data);
         const results = [];
 
@@ -111,8 +111,15 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Direct API Fetching with robust URL parsing)
+// 3. Info & Download Endpoint (Increased Timeout to 45s)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
+    // Express server response timeout set to 60 seconds
+    res.setTimeout(60000, () => {
+        if (!res.headersSent) {
+            res.status(504).json({ status: false, error: "Gateway Timeout" });
+        }
+    });
+
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
@@ -120,7 +127,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     console.log(`🔥 [FAST API DL] Processing Movie: ${movieUrl}`);
 
     try {
-        const movieRes = await axios.get(movieUrl, { headers: HEADERS, timeout: 15000 });
+        const movieRes = await axios.get(movieUrl, { headers: HEADERS, timeout: 45000 });
         const $ = cheerio.load(movieRes.data);
 
         const title = $('meta[property="og:title"]').attr('content') || $('h1').text().trim() || 'Unknown';
@@ -146,14 +153,14 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         });
 
-        console.log(`📦 Found ${rawZtLinks.length} wrapper links. Resolving via direct API...`);
+        console.log(`📦 Found ${rawZtLinks.length} wrapper links. Resolving via direct API with increased timeout...`);
 
         const downloads = [];
 
         for (const item of rawZtLinks) {
             try {
-                // Step A: Get zt-link page
-                const ztRes = await axios.get(item.href, { headers: HEADERS, timeout: 10000 });
+                // Step A: Get zt-link page (Timeout 45s)
+                const ztRes = await axios.get(item.href, { headers: HEADERS, timeout: 45000 });
                 const $zt = cheerio.load(ztRes.data);
 
                 let serverLink = '';
@@ -165,12 +172,12 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 });
 
                 if (serverLink) {
-                    // Step B: Robust URL construction using URL parser (No replace bugs!)
+                    // Step B: Robust URL construction using URL parser
                     const parsedUrl = new URL(serverLink);
                     const apiUrl = `https://drive.csplayer2.space/api/download-data${parsedUrl.pathname}${parsedUrl.search}`;
                     console.log(`🔍 Fetching CSPlayer API: ${apiUrl}`);
 
-                    const apiRes = await axios.get(apiUrl, { headers: HEADERS, timeout: 10000 });
+                    const apiRes = await axios.get(apiUrl, { headers: HEADERS, timeout: 45000 });
                     const apiData = apiRes.data;
 
                     if (apiData) {
@@ -193,29 +200,33 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         console.log(`🎉 Successfully fetched ${downloads.length} direct links with file info!`);
         console.log(`==============================================\n`);
 
-        res.json({
-            status: true,
-            creator: "@Imalsha",
-            site: "cinesubz",
-            url: movieUrl,
-            data: {
-                title,
-                image,
-                quality,
-                rating,
-                imdb: rating,
-                director,
-                language: "ENGLISH",
-                genres: ["Action", "Adventure", "Sinhala Subtitles"],
-                story: story || 'No description available',
-                year: "2026",
-                downloads: downloads.length > 0 ? downloads : [{ quality: "HD [Telegram]", file_name: "N/A", size: "N/A", language: "English / Sinhala Sub", link: "https://t.me/CineSubzAdmin", direct_link: "https://t.me/CineSubzAdmin" }]
-            }
-        });
+        if (!res.headersSent) {
+            res.json({
+                status: true,
+                creator: "@Imalsha",
+                site: "cinesubz",
+                url: movieUrl,
+                data: {
+                    title,
+                    image,
+                    quality,
+                    rating,
+                    imdb: rating,
+                    director,
+                    language: "ENGLISH",
+                    genres: ["Action", "Adventure", "Sinhala Subtitles"],
+                    story: story || 'No description available',
+                    year: "2026",
+                    downloads: downloads.length > 0 ? downloads : [{ quality: "HD [Telegram]", file_name: "N/A", size: "N/A", language: "English / Sinhala Sub", link: "https://t.me/CineSubzAdmin", direct_link: "https://t.me/CineSubzAdmin" }]
+                }
+            });
+        }
 
     } catch (err) {
         console.error(`❌ [API ERROR]: ${err.message}`);
-        res.status(500).json({ status: false, error: err.message });
+        if (!res.headersSent) {
+            res.status(500).json({ status: false, error: err.message });
+        }
     }
 });
 
