@@ -111,7 +111,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Fixed URL resolution)
+// 3. Info & Download Endpoint with API Response Inspector
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     res.setTimeout(60000, () => {
         if (!res.headersSent) {
@@ -177,9 +177,11 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     const apiRes = await axios.get(apiUrl, { headers: HEADERS, timeout: 45000 });
                     const apiData = apiRes.data;
 
+                    // 🎯 මෙතැනින් API එකෙන් එන සම්පූර්ණ JSON ඩේටා එක ටර්මිනල් එකේ ප්‍රින්ට් වෙනවා
+                    console.log(`🎯 [CSPLAYER API RAW JSON RESPONSE]:`, JSON.stringify(apiData, null, 2));
+
                     if (apiData) {
-                        // Correctly resolve absolute URL for download link
-                        let finalDownloadLink = apiData.download_url || apiData.url || serverLink;
+                        let finalDownloadLink = apiData.download_url || apiData.url || apiData.link || apiData.file_url || serverLink;
                         if (finalDownloadLink.startsWith('/')) {
                             finalDownloadLink = `https://drive.csplayer2.space${finalDownloadLink}`;
                         }
