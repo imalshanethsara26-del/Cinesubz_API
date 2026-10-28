@@ -112,7 +112,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Helper function: Use Puppeteer to click the button and extract the real final download URL
+// Helper function: Advanced Puppeteer resolver to catch final direct link / new tab
 async function resolveRealDownloadUrl(csPlayerUrl) {
     let finalUrl = csPlayerUrl;
     let browser = null;
@@ -124,35 +124,58 @@ async function resolveRealDownloadUrl(csPlayerUrl) {
         const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
 
-        // Track network requests to capture final redirection/media link
+        // Capture any new tab/window opened by click
+        browser.on('targetcreated', async target => {
+            try {
+                const newPage = await target.page();
+                if (newPage) {
+                    await newPage.waitForNavigation({ waitUntil: 'load', timeout: 5000 }).catch(() => {});
+                    const newUrl = newPage.url();
+                    if (newUrl && !newUrl.includes('csplayer2.space') && !newUrl.includes('about:blank')) {
+                        finalUrl = newUrl;
+                    }
+                }
+            } catch (e) {}
+        });
+
+        // Track network requests
         page.on('request', req => {
             const url = req.url();
-            if (url.includes('.mp4') || url.includes('pixeldrain') || (url.includes('dl.') && !url.includes('csplayer2.space/api'))) {
-                finalUrl = url;
+            if (url.includes('.mp4') || url.includes('pixeldrain') || url.includes('download')) {
+                if (!url.includes('csplayer2.space/api')) {
+                    finalUrl = url;
+                }
             }
         });
 
         await page.goto(csPlayerUrl, { waitUntil: 'networkidle2', timeout: 30000 });
 
-        // Wait for timer to finish and button to appear
-        await new Promise(r => setTimeout(r, 4000));
+        // Wait for timer to finish (usually 3-5 seconds)
+        await new Promise(r => setTimeout(r, 5000));
 
-        // Click the Direct Download button automatically
-        const clicked = await page.evaluate(() => {
+        // Click the Direct Download button and capture href if it's an anchor tag
+        const buttonHref = await page.evaluate(() => {
             const elements = Array.from(document.querySelectorAll('a, button, div, span'));
             const targetBtn = elements.find(el => {
                 const txt = (el.innerText || '').toUpperCase();
                 return txt.includes('DIRECT DOWNLOAD') || txt.includes('DOWNLOAD (NEW)');
             });
             if (targetBtn) {
+                // If it's inside an anchor or is an anchor with href
+                const anchor = targetBtn.closest('a') || targetBtn;
+                if (anchor.href && anchor.href.startsWith('http')) {
+                    return anchor.href;
+                }
                 targetBtn.click();
-                return true;
+                return null;
             }
-            return false;
+            return null;
         });
 
-        if (clicked) {
-            // Wait for the navigation or new request triggered by click
+        if (buttonHref) {
+            finalUrl = buttonHref;
+        } else {
+            // Wait for navigation after click
             await new Promise(r => setTimeout(r, 4000));
             if (page.url() !== csPlayerUrl) {
                 finalUrl = page.url();
@@ -166,7 +189,7 @@ async function resolveRealDownloadUrl(csPlayerUrl) {
     return finalUrl;
 }
 
-// 3. Info & Download Endpoint with Automated Button Clicker
+// 3. Info & Download Endpoint
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     res.setTimeout(60000, () => {
         if (!res.headersSent) {
@@ -207,7 +230,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         });
 
-        console.log(`📦 Found ${rawZtLinks.length} wrapper links. Resolving via API & Puppeteer...`);
+        console.log(`📦 Found ${rawZtLinks.length} wrapper links. Resolving via Puppeteer click-through...`);
 
         const downloads = [];
 
@@ -242,8 +265,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         }
                     }
 
-                    // 🚀 Call Puppeteer to click the button and get the absolute final direct link!
-                    console.log(`🖱️ Resolving actual direct link via automated click for: ${portalLink}`);
+                    console.log(`🖱️ Resolving actual direct link for: ${portalLink}`);
                     const realDirectLink = await resolveRealDownloadUrl(portalLink);
 
                     let fileName = 'N/A';
