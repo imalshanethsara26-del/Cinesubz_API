@@ -111,7 +111,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Direct API Fetching - No Puppeteer needed!)
+// 3. Info & Download Endpoint (Direct API Fetching)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -120,7 +120,6 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     console.log(`🔥 [FAST API DL] Processing Movie: ${movieUrl}`);
 
     try {
-        // Fetch movie page
         const movieRes = await axios.get(movieUrl, { headers: HEADERS, timeout: 15000 });
         const $ = cheerio.load(movieRes.data);
 
@@ -166,9 +165,8 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 });
 
                 if (serverLink) {
-                    // Step B: Transform server link to the discovered API endpoint
-                    // e.g. https://drive.csplayer2.space/server7/... -> https://drive.csplayer2.space/api/download-data/server7/...
-                    const apiUrl = serverLink.replace('drive.csplayer2.space/', 'drive.csplayer2.space/api/download-data/');
+                    // Step B: Correctly format the API endpoint URL
+                    const apiUrl = serverLink.replace('https://drive.csplayer2.space/', 'https://drive.csplayer2.space/api/download-data/');
                     console.log(`🔍 Fetching CSPlayer API: ${apiUrl}`);
 
                     const apiRes = await axios.get(apiUrl, { headers: HEADERS, timeout: 10000 });
