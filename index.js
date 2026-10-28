@@ -1,6 +1,7 @@
 const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
+const puppeteer = require('puppeteer');
 const cors = require('cors');
 
 const app = express();
@@ -111,7 +112,61 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Final Mapping using apiData.redirect)
+// Helper function: Use Puppeteer to click the button and extract the real final download URL
+async function resolveRealDownloadUrl(csPlayerUrl) {
+    let finalUrl = csPlayerUrl;
+    let browser = null;
+    try {
+        browser = await puppeteer.launch({
+            headless: true,
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+        });
+        const page = await browser.newPage();
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+
+        // Track network requests to capture final redirection/media link
+        page.on('request', req => {
+            const url = req.url();
+            if (url.includes('.mp4') || url.includes('pixeldrain') || (url.includes('dl.') && !url.includes('csplayer2.space/api'))) {
+                finalUrl = url;
+            }
+        });
+
+        await page.goto(csPlayerUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+
+        // Wait for timer to finish and button to appear
+        await new Promise(r => setTimeout(r, 4000));
+
+        // Click the Direct Download button automatically
+        const clicked = await page.evaluate(() => {
+            const elements = Array.from(document.querySelectorAll('a, button, div, span'));
+            const targetBtn = elements.find(el => {
+                const txt = (el.innerText || '').toUpperCase();
+                return txt.includes('DIRECT DOWNLOAD') || txt.includes('DOWNLOAD (NEW)');
+            });
+            if (targetBtn) {
+                targetBtn.click();
+                return true;
+            }
+            return false;
+        });
+
+        if (clicked) {
+            // Wait for the navigation or new request triggered by click
+            await new Promise(r => setTimeout(r, 4000));
+            if (page.url() !== csPlayerUrl) {
+                finalUrl = page.url();
+            }
+        }
+    } catch (err) {
+        console.log(`⚠️ Puppeteer resolver error: ${err.message}`);
+    } finally {
+        if (browser) await browser.close();
+    }
+    return finalUrl;
+}
+
+// 3. Info & Download Endpoint with Automated Button Clicker
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     res.setTimeout(60000, () => {
         if (!res.headersSent) {
@@ -123,7 +178,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔥 [FAST API DL] Processing Movie: ${movieUrl}`);
+    console.log(`🔥 [ULTIMATE API DL] Processing Movie: ${movieUrl}`);
 
     try {
         const movieRes = await axios.get(movieUrl, { headers: HEADERS, timeout: 45000 });
@@ -152,7 +207,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         });
 
-        console.log(`📦 Found ${rawZtLinks.length} wrapper links. Resolving via direct API...`);
+        console.log(`📦 Found ${rawZtLinks.length} wrapper links. Resolving via API & Puppeteer...`);
 
         const downloads = [];
 
@@ -172,42 +227,50 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 if (serverLink) {
                     const parsedUrl = new URL(serverLink);
                     const apiUrl = `https://drive.csplayer2.space/api/download-data${parsedUrl.pathname}${parsedUrl.search}`;
-                    console.log(`🔍 Fetching CSPlayer API: ${apiUrl}`);
+                    
+                    let apiData = null;
+                    try {
+                        const apiRes = await axios.get(apiUrl, { headers: HEADERS, timeout: 45000 });
+                        apiData = apiRes.data;
+                    } catch (e) {}
 
-                    const apiRes = await axios.get(apiUrl, { headers: HEADERS, timeout: 45000 });
-                    const apiData = apiRes.data;
-
+                    let portalLink = serverLink;
                     if (apiData && apiData.redirect) {
-                        let finalDownloadLink = apiData.redirect;
-                        if (finalDownloadLink.startsWith('/')) {
-                            finalDownloadLink = `https://drive.csplayer2.space${finalDownloadLink}`;
+                        portalLink = apiData.redirect;
+                        if (portalLink.startsWith('/')) {
+                            portalLink = `https://drive.csplayer2.space${portalLink}`;
                         }
-
-                        // Extract file name from redirect path
-                        let fileName = 'N/A';
-                        try {
-                            const urlParts = finalDownloadLink.split('/');
-                            const lastPart = urlParts[urlParts.length - 1].split('?')[0];
-                            fileName = decodeURIComponent(lastPart);
-                        } catch (e) {}
-
-                        const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p)/i) || ['HD'];
-                        downloads.push({
-                            quality: `${qMatch[0].toUpperCase()} [CSPlayer Direct]`,
-                            file_name: fileName,
-                            size: "N/A",
-                            language: "English / Sinhala Sub",
-                            link: finalDownloadLink,
-                            direct_link: finalDownloadLink
-                        });
                     }
+
+                    // 🚀 Call Puppeteer to click the button and get the absolute final direct link!
+                    console.log(`🖱️ Resolving actual direct link via automated click for: ${portalLink}`);
+                    const realDirectLink = await resolveRealDownloadUrl(portalLink);
+
+                    let fileName = 'N/A';
+                    try {
+                        const urlParts = realDirectLink.split('/');
+                        const lastPart = urlParts[urlParts.length - 1].split('?')[0];
+                        if (lastPart.includes('.mp4')) {
+                            fileName = decodeURIComponent(lastPart);
+                        }
+                    } catch (e) {}
+
+                    const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p)/i) || ['HD'];
+                    downloads.push({
+                        quality: `${qMatch[0].toUpperCase()} [Direct Download]`,
+                        file_name: fileName,
+                        size: "N/A",
+                        language: "English / Sinhala Sub",
+                        link: realDirectLink,
+                        direct_link: realDirectLink
+                    });
                 }
             } catch (innerErr) {
                 console.log(`⚠️ Error resolving zt-link ${item.href}: ${innerErr.message}`);
             }
         }
 
-        console.log(`🎉 Successfully fetched ${downloads.length} direct links with file info!`);
+        console.log(`🎉 Successfully extracted ${downloads.length} direct links!`);
         console.log(`==============================================\n`);
 
         if (!res.headersSent) {
