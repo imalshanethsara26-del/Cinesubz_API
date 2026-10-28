@@ -17,7 +17,7 @@ const HEADERS = {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ LIGHTNING-FAST API is Live 🚀",
+        message: "IMALSHA CINESUBZ ULTIMATE API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -111,9 +111,8 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Increased Timeout to 45s)
+// 3. Info & Download Endpoint (Fixed URL resolution)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
-    // Express server response timeout set to 60 seconds
     res.setTimeout(60000, () => {
         if (!res.headersSent) {
             res.status(504).json({ status: false, error: "Gateway Timeout" });
@@ -153,13 +152,12 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         });
 
-        console.log(`📦 Found ${rawZtLinks.length} wrapper links. Resolving via direct API with increased timeout...`);
+        console.log(`📦 Found ${rawZtLinks.length} wrapper links. Resolving via direct API...`);
 
         const downloads = [];
 
         for (const item of rawZtLinks) {
             try {
-                // Step A: Get zt-link page (Timeout 45s)
                 const ztRes = await axios.get(item.href, { headers: HEADERS, timeout: 45000 });
                 const $zt = cheerio.load(ztRes.data);
 
@@ -172,7 +170,6 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 });
 
                 if (serverLink) {
-                    // Step B: Robust URL construction using URL parser
                     const parsedUrl = new URL(serverLink);
                     const apiUrl = `https://drive.csplayer2.space/api/download-data${parsedUrl.pathname}${parsedUrl.search}`;
                     console.log(`🔍 Fetching CSPlayer API: ${apiUrl}`);
@@ -181,14 +178,20 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     const apiData = apiRes.data;
 
                     if (apiData) {
+                        // Correctly resolve absolute URL for download link
+                        let finalDownloadLink = apiData.download_url || apiData.url || serverLink;
+                        if (finalDownloadLink.startsWith('/')) {
+                            finalDownloadLink = `https://drive.csplayer2.space${finalDownloadLink}`;
+                        }
+
                         const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p)/i) || ['HD'];
                         downloads.push({
                             quality: `${qMatch[0].toUpperCase()} [Direct Server]`,
                             file_name: apiData.file_name || apiData.filename || 'N/A',
                             size: apiData.file_size || apiData.size || 'N/A',
                             language: "English / Sinhala Sub",
-                            link: apiData.download_url || apiData.url || serverLink,
-                            direct_link: apiData.download_url || apiData.url || serverLink
+                            link: finalDownloadLink,
+                            direct_link: finalDownloadLink
                         });
                     }
                 }
