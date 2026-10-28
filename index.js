@@ -44,7 +44,7 @@ function getChromeExecutablePath() {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ ULTIMATE JSON-INTERCEPTOR API is Live 🚀",
+        message: "IMALSHA CINESUBZ OPTIMIZED API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -138,35 +138,16 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// Advanced Interceptor: Captures background JSON API responses and full DOM data from csplayer
-async function resolveCsPlayerCompleteJson(page, ztUrl) {
+// Fast Resolver: Resolves zt-link with optimized timeout
+async function quickResolveZtLink(page, ztUrl) {
     try {
-        console.log(`\n🔍 [RESOLVER] Opening Wrapper: ${ztUrl}`);
-        
-        let capturedApiResponse = null;
+        console.log(`\n🔍 [FAST RESOLVER] Opening: ${ztUrl}`);
+        await page.goto(ztUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
 
-        const responseListener = async (response) => {
-            const reqUrl = response.url();
-            const contentType = response.headers()['content-type'] || '';
-            if (contentType.includes('application/json') || reqUrl.includes('api') || reqUrl.includes('get') || reqUrl.includes('json')) {
-                try {
-                    const json = await response.json();
-                    if (json && (json.file_name || json.file_size || json.download_url || JSON.stringify(json).includes('mp4') || JSON.stringify(json).includes('server'))) {
-                        capturedApiResponse = json;
-                        console.log(`🎯 [INTERCEPTED CSPLAYER API JSON]:`, reqUrl);
-                    }
-                } catch (e) {}
-            }
-        };
+        // Wait minimal timer
+        await new Promise(r => setTimeout(r, 2000));
 
-        page.on('response', responseListener);
-
-        await page.goto(ztUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
-
-        // Wait for timer
-        await new Promise(r => setTimeout(r, 3500));
-
-        // Click "Go to Download Page"
+        // Click download button
         await page.evaluate(() => {
             const elements = Array.from(document.querySelectorAll('a, button, div, span'));
             const target = elements.find(el => {
@@ -177,57 +158,36 @@ async function resolveCsPlayerCompleteJson(page, ztUrl) {
         });
 
         try {
-            await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 8000 });
+            await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 6000 });
         } catch (e) {}
 
-        // Wait for csplayer background fetches to complete
-        await new Promise(r => setTimeout(r, 4000));
+        await new Promise(r => setTimeout(r, 2000));
 
-        page.off('response', responseListener);
-
-        // Extract DOM data as well as backup
-        const domData = await page.evaluate(() => {
-            const bodyText = document.body.innerText || '';
-            const lines = bodyText.split('\n').map(l => l.trim()).filter(Boolean);
-
-            let detectedFileName = 'N/A';
-            let detectedFileSize = 'N/A';
-
-            for (let i = 0; i < lines.length; i++) {
-                if (lines[i].toLowerCase().includes('file name') && lines[i + 1]) {
-                    detectedFileName = lines[i + 1];
-                }
-                if (lines[i].toLowerCase().includes('file size') && lines[i + 1]) {
-                    detectedFileSize = lines[i + 1];
-                }
-            }
-
-            const anchors = Array.from(document.querySelectorAll('a, button'));
-            const buttonsData = anchors.map(a => ({
-                href: a.href || a.getAttribute('data-href') || '',
-                text: (a.innerText || a.textContent || '').trim()
-            })).filter(item => item.href && !item.href.startsWith('javascript:'));
-
-            return {
-                fileName: detectedFileName,
-                fileSize: detectedFileSize,
-                buttons: buttonsData
-            };
+        // Extract direct server links from page
+        const directLink = await page.evaluate(() => {
+            const anchors = Array.from(document.querySelectorAll('a'));
+            const found = anchors.find(a => {
+                const href = (a.href || '').toLowerCase();
+                return href.includes('drive.csplayer') || href.includes('/server') || href.includes('ext=mp4');
+            });
+            return found ? found.href : null;
         });
 
-        return {
-            apiJson: capturedApiResponse,
-            domInfo: domData
-        };
+        return directLink || ztUrl;
 
     } catch (err) {
-        console.error(`❌ Error resolving ${ztUrl}: ${err.message}`);
-        return { apiJson: null, domInfo: { fileName: 'N/A', fileSize: 'N/A', buttons: [] } };
+        console.error(`❌ Resolve error for ${ztUrl}: ${err.message}`);
+        return ztUrl;
     }
 }
 
-// 3. Main Info & Download Endpoint
+// 3. Main Info & Download Endpoint with Extended Server Timeout
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
+    // Set server response timeout to 60 seconds to prevent timeout error
+    res.setTimeout(60000, () => {
+        res.status(504).json({ status: false, error: "Gateway Timeout" });
+    });
+
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
@@ -286,80 +246,62 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         const downloads = [];
 
         for (const item of rawZtLinks) {
-            const result = await resolveCsPlayerCompleteJson(page, item.href);
-            
-            // If API JSON was intercepted, include it
-            if (result.apiJson) {
+            const resolvedLink = await quickResolveZtLink(page, item.href);
+
+            const lLower = resolvedLink.toLowerCase();
+            let type = "Direct Server";
+            if (lLower.includes('pixeldrain')) type = "PixelDrain";
+            else if (lLower.includes('t.me')) type = "Telegram";
+            else if (lLower.includes('drive.csplayer') || lLower.includes('server')) type = "CSPlayer Direct";
+
+            const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p)/i) || ['HD'];
+            const qualityLabel = `${qMatch[0].toUpperCase()} [${type}]`;
+
+            if (!downloads.some(d => d.link === resolvedLink)) {
                 downloads.push({
-                    quality: item.text || "HD [API JSON]",
-                    file_name: result.apiJson.file_name || result.domInfo.fileName,
-                    size: result.apiJson.file_size || result.domInfo.fileSize,
+                    quality: qualityLabel,
+                    size: "N/A",
                     language: "English / Sinhala Sub",
-                    raw_json: result.apiJson,
-                    link: result.apiJson.download_url || result.apiJson.url || item.href,
-                    direct_link: result.apiJson.download_url || result.apiJson.url || item.href
-                });
-            }
-
-            // Process DOM buttons and links found inside csplayer
-            if (result.domInfo && result.domInfo.buttons.length > 0) {
-                result.domInfo.buttons.forEach(btn => {
-                    const lLower = btn.href.toLowerCase();
-                    if (lLower.includes('drive.csplayer') || lLower.includes('/server') || lLower.includes('pixeldrain') || lLower.includes('ext=mp4') || lLower.includes('t.me')) {
-                        let type = "Direct Server";
-                        if (lLower.includes('pixeldrain')) type = "PixelDrain";
-                        else if (lLower.includes('t.me')) type = "Telegram";
-                        else if (lLower.includes('drive.csplayer') || lLower.includes('server')) type = "CSPlayer Direct";
-
-                        const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p)/i) || btn.text.match(/(2160p|4K|1080p|720p|480p)/i) || ['HD'];
-                        const qualityLabel = `${qMatch[0].toUpperCase()} [${type}]`;
-
-                        if (!downloads.some(d => d.link === btn.href)) {
-                            downloads.push({
-                                quality: qualityLabel,
-                                file_name: result.domInfo.fileName,
-                                size: result.domInfo.fileSize,
-                                language: "English / Sinhala Sub",
-                                button_text: btn.text,
-                                link: btn.href,
-                                direct_link: btn.href
-                            });
-                        }
-                    }
+                    link: resolvedLink,
+                    direct_link: resolvedLink
                 });
             }
         }
 
         await browser.close();
 
-        console.log(`🎉 Successfully extracted data with interception and DOM parsing!`);
+        console.log(`🎉 Successfully processed links without timeout!`);
         console.log(`==============================================\n`);
 
-        res.json({
-            status: true,
-            creator: "@Imalsha",
-            site: "cinesubz",
-            url: movieUrl,
-            data: {
-                title,
-                image,
-                quality,
-                rating,
-                imdb: rating,
-                director,
-                language: "ENGLISH",
-                genres: ["Action", "Adventure", "Sinhala Subtitles"],
-                story: story || 'No description available',
-                year: "2026",
-                downloads: downloads.length > 0 ? downloads : [{ quality: "HD [Telegram]", file_name: "N/A", size: "N/A", language: "English / Sinhala Sub", link: "https://t.me/CineSubzAdmin", direct_link: "https://t.me/CineSubzAdmin" }]
-            }
-        });
+        if (!res.headersSent) {
+            res.json({
+                status: true,
+                creator: "@Imalsha",
+                site: "cinesubz",
+                url: movieUrl,
+                data: {
+                    title,
+                    image,
+                    quality,
+                    rating,
+                    imdb: rating,
+                    director,
+                    language: "ENGLISH",
+                    genres: ["Action", "Adventure", "Sinhala Subtitles"],
+                    story: story || 'No description available',
+                    year: "2026",
+                    downloads: downloads.length > 0 ? downloads : [{ quality: "HD [Telegram]", size: "N/A", language: "English / Sinhala Sub", link: "https://t.me/CineSubzAdmin", direct_link: "https://t.me/CineSubzAdmin" }]
+                }
+            });
+        }
 
     } catch (err) {
         if (browser) await browser.close();
         console.error(`❌ [SCRAPER ERROR]: ${err.message}`);
-        res.status(500).json({ status: false, error: err.message });
+        if (!res.headersSent) {
+            res.status(500).json({ status: false, error: err.message });
+        }
     }
 });
 
-app.listen(PORT, () => console.log(`Cinesubz Ultimate Scraper API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Optimized Cinesubz API running on port ${PORT}`));
