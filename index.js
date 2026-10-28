@@ -1,71 +1,223 @@
-const puppeteer = require('puppeteer');
+const express = require('express');
+const axios = require('axios');
+const cheerio = require('cheerio');
+const cors = require('cors');
 
-async function inspectCsPlayerPage(targetUrl) {
-    console.log(`\n🔍 [INSPECTOR] Opening target URL: ${targetUrl}`);
-    
-    const browser = await puppeteer.launch({
-        headless: true, // අවශ්‍ය නම් false කරලා බ්‍රව්සර් එක පේන්න සකස් කරන්න පුළුවන්
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+const app = express();
+const PORT = process.env.PORT || 8080;
+
+app.use(cors());
+
+const HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Referer': 'https://cinesubz.net/'
+};
+
+// Root Route
+app.get('/', (req, res) => {
+    res.json({
+        status: true,
+        message: "IMALSHA CINESUBZ LIGHTNING-FAST API is Live 🚀",
+        endpoints: {
+            latest: "/api/v1/cinesubz/latest?page=1",
+            search: "/api/v1/cinesubz/search?q=movie_name",
+            infodl: "/api/v1/cinesubz/infodl?url=movie_url"
+        }
     });
+});
 
-    const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
-
-    // 1. පිටතටයන සියලුම Request ට්‍රැක් කිරීම
-    page.on('request', req => {
-        console.log(`➡️ [REQUEST]: ${req.method()} ${req.url()}`);
-    });
-
-    // 2. ලැබෙන සියලුම Response සහ API JSON දත්ත අල්ලා ගැනීම
-    page.on('response', async res => {
-        const reqUrl = res.url();
-        const status = res.status();
-        console.log(`⬅️ [RESPONSE] [${status}]: ${reqUrl}`);
-        
-        try {
-            const contentType = res.headers()['content-type'] || '';
-            if (contentType.includes('application/json') || reqUrl.includes('api') || reqUrl.includes('get')) {
-                const json = await res.json();
-                console.log(`🎯 [API JSON PAYLOAD FOUND]:`, JSON.stringify(json, null, 2));
-            }
-        } catch (e) {}
-    });
-
+// 1. Latest Movies Endpoint
+app.get('/api/v1/cinesubz/latest', async (req, res) => {
     try {
-        // අර ඩුපෝස්ට්/සීඑස්පלෙයාර් ලින්ක් එකට කෙළින්ම යෑම
-        await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-        console.log(`✅ Page loaded. Waiting for elements to render...`);
+        const pageNum = req.query.page || 1;
+        const latestUrl = pageNum == 1 ? "https://cinesubz.co/" : `https://cinesubz.co/page/${pageNum}/`;
+        
+        const response = await axios.get(latestUrl, { headers: HEADERS, timeout: 15000 });
+        const $ = cheerio.load(response.data);
+        const results = [];
 
-        // ටයිමර් එක හෝ ස්ක්‍රිප්ට් ලෝඩ් වන තෙක් තත්පර කිහිපයක් රැඳී සිටීම
-        await new Promise(r => setTimeout(r, 4000));
+        $('a').each((i, el) => {
+            const href = $(el).attr('href') || '';
+            const parent = $(el).closest('article, .post, .item, div');
+            
+            let title = $(el).find('h2, h3, .title').text().trim();
+            if (!title) title = $(el).attr('title') || '';
+            if (!title) title = $(el).text().trim();
 
-        // පේජ් එකේ තියෙන "Direct Download (New)" බටන් එක ක්ලික් කිරීම
-        const clicked = await page.evaluate(() => {
-            const elements = Array.from(document.querySelectorAll('a, button, div, span'));
-            const targetBtn = elements.find(el => {
-                const txt = (el.innerText || '').toUpperCase();
-                return txt.includes('DIRECT DOWNLOAD') || txt.includes('DOWNLOAD (NEW)') || txt.includes('PROCESSING');
-            });
-            if (targetBtn) {
-                targetBtn.click();
-                return true;
+            let img = $(el).find('img').attr('src') || $(el).find('img').attr('data-src') || $(el).find('img').attr('data-lazy-src');
+            if (!img) {
+                img = parent.find('img').attr('src') || parent.find('img').attr('data-src') || parent.find('img').attr('data-lazy-src');
             }
-            return false;
+            if (!img) img = '';
+            if (img.startsWith('//')) img = 'https:' + img;
+
+            let quality = parent.find('.quality, .badge').text().trim() || 'WEB-DL';
+            let rating = parent.find('.imdb-rate, .rating').text().trim() || 'N/A';
+
+            if (href.includes('cinesubz.') && (href.includes('/movies/') || href.includes('/tvshows/')) && title.length > 2) {
+                title = title.replace(/\t|\n/g, '').trim();
+                if (!results.some(r => r.link === href)) {
+                    results.push({ title, image: img, quality, rating, link: href });
+                }
+            }
         });
 
-        console.log(`🖱️ Download button click triggered: ${clicked}`);
+        res.json({ status: true, creator: "@Imalsha", site: "cinesubz", page: Number(pageNum), results_count: results.length, data: results });
+    } catch (err) {
+        res.status(500).json({ status: false, error: err.message });
+    }
+});
 
-        // ක්ලික් කළ පසු බැක්ග්‍රাউন্ড එකෙන් එන රෙක්වෙස්ට්ස් කැච් වීමට තව ටිකක් වෙලා බලා සිටීම
-        await new Promise(r => setTimeout(r, 8000));
+// 2. Search Endpoint
+app.get('/api/v1/cinesubz/search', async (req, res) => {
+    try {
+        const query = req.query.q;
+        if (!query) return res.status(400).json({ status: false, message: "Search term required" });
+
+        const searchUrl = "https://cinesubz.co/?s=" + encodeURIComponent(query);
+        const response = await axios.get(searchUrl, { headers: HEADERS, timeout: 10000 });
+        const $ = cheerio.load(response.data);
+        const results = [];
+
+        $('a').each((i, el) => {
+            const href = $(el).attr('href') || '';
+            const parent = $(el).closest('article, .result-item, .item, div');
+            
+            let title = $(el).find('h2, h3, .title').text().trim();
+            if (!title) title = $(el).attr('title') || '';
+            if (!title) title = $(el).text().trim();
+
+            let img = $(el).find('img').attr('src') || $(el).find('img').attr('data-src') || $(el).find('img').attr('data-lazy-src');
+            if (!img) {
+                img = parent.find('img').attr('src') || parent.find('img').attr('data-src') || parent.find('img').attr('data-lazy-src');
+            }
+            if (!img) img = '';
+            if (img.startsWith('//')) img = 'https:' + img;
+
+            let quality = parent.find('.quality, .badge').text().trim() || 'WEB-DL';
+            let rating = parent.find('.imdb-rate, .rating').text().trim() || 'N/A';
+
+            if (href.includes('cinesubz.') && (href.includes('/movies/') || href.includes('/tvshows/')) && title.length > 2) {
+                title = title.replace(/\t|\n/g, '').trim();
+                if (!results.some(r => r.link === href)) {
+                    results.push({ title, image: img, quality, rating, link: href });
+                }
+            }
+        });
+
+        res.json({ status: true, creator: "@Imalsha", site: "cinesubz", results_count: results.length, data: results });
+    } catch (err) {
+        res.status(500).json({ status: false, error: err.message });
+    }
+});
+
+// 3. Info & Download Endpoint (Direct API Fetching - No Puppeteer needed!)
+app.get('/api/v1/cinesubz/infodl', async (req, res) => {
+    const movieUrl = req.query.url;
+    if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
+
+    console.log(`\n==============================================`);
+    console.log(`🔥 [FAST API DL] Processing Movie: ${movieUrl}`);
+
+    try {
+        // Fetch movie page
+        const movieRes = await axios.get(movieUrl, { headers: HEADERS, timeout: 15000 });
+        const $ = cheerio.load(movieRes.data);
+
+        const title = $('meta[property="og:title"]').attr('content') || $('h1').text().trim() || 'Unknown';
+        const image = $('meta[property="og:image"]').attr('content') || '';
+        const quality = $('.quality').first().text().trim() || 'WEB-DL';
+        const rating = $('span.rating, .imdb-rate').first().text().trim() || 'N/A';
+        const director = $('span.director').text().trim() || 'N/A';
+
+        let story = '';
+        $('p').each((i, el) => {
+            const txt = $(el).text().trim();
+            if (txt.length > 30 && !txt.includes('උපසිරැසි') && !txt.includes('Download') && !story) {
+                story = txt;
+            }
+        });
+
+        const rawZtLinks = [];
+        $('a').each((i, el) => {
+            const href = $(el).attr('href') || '';
+            const text = $(el).text().trim();
+            if (href.includes('zt-links')) {
+                rawZtLinks.push({ href, text });
+            }
+        });
+
+        console.log(`📦 Found ${rawZtLinks.length} wrapper links. Resolving via direct API...`);
+
+        const downloads = [];
+
+        for (const item of rawZtLinks) {
+            try {
+                // Step A: Get zt-link page
+                const ztRes = await axios.get(item.href, { headers: HEADERS, timeout: 10000 });
+                const $zt = cheerio.load(ztRes.data);
+
+                let serverLink = '';
+                $zt('a').each((i, el) => {
+                    const href = $zt(el).attr('href') || '';
+                    if (href.includes('drive.csplayer') || href.includes('/server')) {
+                        serverLink = href;
+                    }
+                });
+
+                if (serverLink) {
+                    // Step B: Transform server link to the discovered API endpoint
+                    // e.g. https://drive.csplayer2.space/server7/... -> https://drive.csplayer2.space/api/download-data/server7/...
+                    const apiUrl = serverLink.replace('drive.csplayer2.space/', 'drive.csplayer2.space/api/download-data/');
+                    console.log(`🔍 Fetching CSPlayer API: ${apiUrl}`);
+
+                    const apiRes = await axios.get(apiUrl, { headers: HEADERS, timeout: 10000 });
+                    const apiData = apiRes.data;
+
+                    if (apiData) {
+                        const qMatch = item.text.match(/(2160p|4K|1080p|720p|480p)/i) || ['HD'];
+                        downloads.push({
+                            quality: `${qMatch[0].toUpperCase()} [Direct Server]`,
+                            file_name: apiData.file_name || apiData.filename || 'N/A',
+                            size: apiData.file_size || apiData.size || 'N/A',
+                            language: "English / Sinhala Sub",
+                            link: apiData.download_url || apiData.url || serverLink,
+                            direct_link: apiData.download_url || apiData.url || serverLink
+                        });
+                    }
+                }
+            } catch (innerErr) {
+                console.log(`⚠️ Error resolving zt-link ${item.href}: ${innerErr.message}`);
+            }
+        }
+
+        console.log(`🎉 Successfully fetched ${downloads.length} direct links with file info!`);
+        console.log(`==============================================\n`);
+
+        res.json({
+            status: true,
+            creator: "@Imalsha",
+            site: "cinesubz",
+            url: movieUrl,
+            data: {
+                title,
+                image,
+                quality,
+                rating,
+                imdb: rating,
+                director,
+                language: "ENGLISH",
+                genres: ["Action", "Adventure", "Sinhala Subtitles"],
+                story: story || 'No description available',
+                year: "2026",
+                downloads: downloads.length > 0 ? downloads : [{ quality: "HD [Telegram]", file_name: "N/A", size: "N/A", language: "English / Sinhala Sub", link: "https://t.me/CineSubzAdmin", direct_link: "https://t.me/CineSubzAdmin" }]
+            }
+        });
 
     } catch (err) {
-        console.error(`❌ [INSPECTOR ERROR]: ${err.message}`);
-    } finally {
-        await browser.close();
-        console.log(`🔒 Browser closed.`);
+        console.error(`❌ [API ERROR]: ${err.message}`);
+        res.status(500).json({ status: false, error: err.message });
     }
-}
+});
 
-// ඔයා දුන් සැබෑ ලින්ක් එක මෙහි ඇතුළත් කර ඇත[span_2](start_span)[span_2](end_span)
-const targetMovieLink = "https://drive.csplayer2.space/server7/202608/Spider-Man%20Brand%20New%20Day%20(2026)%20English%20WEB-%5BCineSubz.co%5D-480p?ext=mp4";
-inspectCsPlayerPage(targetMovieLink);
+app.listen(PORT, () => console.log(`Lightning Fast Cinesubz API running on port ${PORT}`));
