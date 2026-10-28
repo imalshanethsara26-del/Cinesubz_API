@@ -111,7 +111,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Direct API Fetching)
+// 3. Info & Download Endpoint (Direct API Fetching with robust URL parsing)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -165,8 +165,9 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 });
 
                 if (serverLink) {
-                    // Step B: Correctly format the API endpoint URL
-                    const apiUrl = serverLink.replace('https://drive.csplayer2.space/', 'https://drive.csplayer2.space/api/download-data/');
+                    // Step B: Robust URL construction using URL parser (No replace bugs!)
+                    const parsedUrl = new URL(serverLink);
+                    const apiUrl = `https://drive.csplayer2.space/api/download-data${parsedUrl.pathname}${parsedUrl.search}`;
                     console.log(`🔍 Fetching CSPlayer API: ${apiUrl}`);
 
                     const apiRes = await axios.get(apiUrl, { headers: HEADERS, timeout: 10000 });
