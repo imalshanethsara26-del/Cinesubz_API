@@ -90,7 +90,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Fast Axios-Only Scraper)
+// 3. Info & Download Endpoint (Fast Axios-Only Scraper with Absolute URL Fixer)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -136,7 +136,6 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
         for (const wrap of wrapperLinks) {
             try {
-                // Request the zt-links page directly using Axios with maxRedirects
                 const ztRes = await axios.get(wrap.href, { 
                     headers: HEADERS, 
                     timeout: 15000,
@@ -148,13 +147,13 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
                 // 1. Check all anchor tags inside the zt-links page
                 $zt('a').each((_, ztel) => {
-                    const zh = $zt(ztel).attr('href') || '';
+                    let zh = $zt(ztel).attr('href') || '';
                     if (zh.includes('cloudflarestorage') || zh.includes('pixeldrain') || zh.includes('.mp4') || zh.includes('token=')) {
                         foundLink = zh;
                     }
                 });
 
-                // 2. Check if the final axios response URL is the direct file
+                // 2. Check if final axios response URL is the direct file
                 if (!foundLink && ztRes.request && ztRes.request.res && ztRes.request.res.responseUrl) {
                     const finalUrl = ztRes.request.res.responseUrl;
                     if (!finalUrl.includes('zt-links')) {
@@ -172,11 +171,18 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 }
 
                 if (foundLink) {
+                    // Fix relative URLs (e.g. starting with /server7/) by prepending the base domain
+                    if (foundLink.startsWith('/')) {
+                        const parsedWrapperUrl = new URL(wrap.href);
+                        foundLink = `${parsedWrapperUrl.protocol}//${parsedWrapperUrl.host}${foundLink}`;
+                    }
+
                     console.log(`✅ Found Direct Link: ${foundLink}`);
                     let qName = wrap.text.match(/720p/i) ? "720p" : wrap.text.match(/1080p/i) ? "1080p" : wrap.text.match(/480p/i) ? "480p" : "HD";
                     let typeLabel = foundLink.includes('pixeldrain') ? "PixelDrain" : "Cloudflare R2 Direct";
 
-                    if (!downloads.some(d => d.link === foundLink)) {
+                    // Filter out unwanted links like bestweb badges
+                    if (!foundLink.includes('bestweb.lk') && !downloads.some(d => d.link === foundLink)) {
                         downloads.push({
                             quality: `WEB-DL ${qName} [${typeLabel}]`,
                             size: "N/A",
