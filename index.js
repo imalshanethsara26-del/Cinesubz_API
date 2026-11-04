@@ -18,7 +18,7 @@ const HEADERS = {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ ULTIMATE API is Live 🚀",
+        message: "IMALSHA CINESUBZ LIVE DEBUGGER API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -32,7 +32,6 @@ app.get('/api/v1/cinesubz/latest', async (req, res) => {
     try {
         const pageNum = req.query.page || 1;
         const latestUrl = pageNum == 1 ? "https://cinesubz.co/" : `https://cinesubz.co/page/${pageNum}/`;
-        
         const response = await axios.get(latestUrl, { headers: HEADERS, timeout: 30000 });
         const $ = cheerio.load(response.data);
         const results = [];
@@ -40,18 +39,9 @@ app.get('/api/v1/cinesubz/latest', async (req, res) => {
         $('a').each((i, el) => {
             const href = $(el).attr('href') || '';
             const parent = $(el).closest('article, .post, .item, div');
-            
-            let title = $(el).find('h2, h3, .title').text().trim();
-            if (!title) title = $(el).attr('title') || '';
-            if (!title) title = $(el).text().trim();
-
-            let img = $(el).find('img').attr('src') || $(el).find('img').attr('data-src') || $(el).find('img').attr('data-lazy-src');
-            if (!img) {
-                img = parent.find('img').attr('src') || parent.find('img').attr('data-src') || parent.find('img').attr('data-lazy-src');
-            }
-            if (!img) img = '';
+            let title = $(el).find('h2, h3, .title').text().trim() || $(el).attr('title') || $(el).text().trim();
+            let img = $(el).find('img').attr('src') || $(el).find('img').attr('data-src') || parent.find('img').attr('src') || '';
             if (img.startsWith('//')) img = 'https:' + img;
-
             let quality = parent.find('.quality, .badge').text().trim() || 'WEB-DL';
             let rating = parent.find('.imdb-rate, .rating').text().trim() || 'N/A';
 
@@ -62,7 +52,6 @@ app.get('/api/v1/cinesubz/latest', async (req, res) => {
                 }
             }
         });
-
         res.json({ status: true, creator: "@Imalsha", site: "cinesubz", page: Number(pageNum), results_count: results.length, data: results });
     } catch (err) {
         res.status(500).json({ status: false, error: err.message });
@@ -83,18 +72,9 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
         $('a').each((i, el) => {
             const href = $(el).attr('href') || '';
             const parent = $(el).closest('article, .result-item, .item, div');
-            
-            let title = $(el).find('h2, h3, .title').text().trim();
-            if (!title) title = $(el).attr('title') || '';
-            if (!title) title = $(el).text().trim();
-
-            let img = $(el).find('img').attr('src') || $(el).find('img').attr('data-src') || $(el).find('img').attr('data-lazy-src');
-            if (!img) {
-                img = parent.find('img').attr('src') || parent.find('img').attr('data-src') || parent.find('img').attr('data-lazy-src');
-            }
-            if (!img) img = '';
+            let title = $(el).find('h2, h3, .title').text().trim() || $(el).attr('title') || $(el).text().trim();
+            let img = $(el).find('img').attr('src') || $(el).find('img').attr('data-src') || parent.find('img').attr('src') || '';
             if (img.startsWith('//')) img = 'https:' + img;
-
             let quality = parent.find('.quality, .badge').text().trim() || 'WEB-DL';
             let rating = parent.find('.imdb-rate, .rating').text().trim() || 'N/A';
 
@@ -105,26 +85,29 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
                 }
             }
         });
-
         res.json({ status: true, creator: "@Imalsha", site: "cinesubz", results_count: results.length, data: results });
     } catch (err) {
         res.status(500).json({ status: false, error: err.message });
     }
 });
 
-// 3. Info & Download Endpoint (Full Terminal Debugger + Puppeteer)
+// 3. Info & Download Endpoint (Live SSE Stream Debugger)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
-    res.setTimeout(90000, () => {
-        if (!res.headersSent) {
-            res.status(504).json({ status: false, error: "Gateway Timeout" });
-        }
-    });
-
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
-    console.log(`\n==============================================`);
-    console.log(`🔍 [DEBUGGER START] Processing Movie: ${movieUrl}`);
+    // Set headers for Server-Sent Events (Live Stream to Browser/Terminal)
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const sendLog = (msg) => {
+        console.log(msg);
+        res.write(`data: ${JSON.stringify({ log: msg })}\n\n`);
+    };
+
+    sendLog(`\n==============================================`);
+    sendLog(`🔍 [LIVE STREAM START] Processing: ${movieUrl}`);
 
     let browser;
     try {
@@ -135,7 +118,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
 
-        console.log(`1️⃣ Navigating to main movie page...`);
+        sendLog(`1️⃣ Navigating to main movie page...`);
         await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
         const html = await page.content();
         const $ = cheerio.load(html);
@@ -168,64 +151,54 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         });
 
-        console.log(`📦 Found ${wrapperLinks.length} wrapper/download links to inspect.`);
+        sendLog(`📦 Found ${wrapperLinks.length} wrapper/download links to inspect.`);
 
         const downloads = [];
 
         for (const wrap of wrapperLinks) {
-            console.log(`\n----------------------------------------------`);
-            console.log(`🚀 Opening wrapper link: ${wrap.href} (Text: ${wrap.text})`);
+            sendLog(`\n----------------------------------------------`);
+            sendLog(`🚀 Opening wrapper link: ${wrap.href}`);
             
             try {
                 const subPage = await browser.newPage();
 
-                // 🕵️‍♂️ TRACK ALL NETWORK REQUESTS ON THIS SUBPAGE
                 subPage.on('request', request => {
-                    console.log(`🌐 [REQ] --> ${request.method()} : ${request.url()}`);
+                    sendLog(`🌐 [REQ] ${request.method()} : ${request.url()}`);
                 });
 
-                // 📥 TRACK ALL NETWORK RESPONSES (Look for JSON APIs or hidden file links)
                 subPage.on('response', async response => {
                     const rUrl = response.url();
-                    const rStatus = response.status();
                     if (rUrl.includes('cloudflare') || rUrl.includes('pixeldrain') || rUrl.includes('.mp4') || rUrl.includes('token=')) {
-                        console.log(`🎯 [FOUND MATCH IN NETWORK] (${rStatus}) ${rUrl}`);
+                        sendLog(`🎯 [MATCH] ${rUrl}`);
                     }
                 });
 
-                // Go to intermediate / player page
                 await subPage.goto(wrap.href, { waitUntil: 'networkidle2', timeout: 30000 });
-
-                // Wait a bit for timers or AJAX loads to complete
-                console.log(`⏳ Waiting for timer/dynamic elements to load...`);
+                sendLog(`⏳ Waiting for timer/dynamic elements...`);
                 await new Promise(r => setTimeout(r, 6000));
 
-                // Try to click the "Go to Download Page" or "Direct Download" button if it exists
                 try {
                     const downloadBtnSelector = 'a.btn, button, a[href*="csplayer"], a[id*="download"]';
                     await subPage.waitForSelector(downloadBtnSelector, { timeout: 5000 });
-                    
                     const btnExists = await subPage.$(downloadBtnSelector);
                     if (btnExists) {
-                        console.log(`🖱️ Clicking download/redirect button on page...`);
+                        sendLog(`🖱️ Clicking download button...`);
                         await Promise.all([
                             btnExists.click(),
                             subPage.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {})
                         ]);
                     }
-                } catch (btnErr) {
-                    console.log(`⚠️ No clickable button found or click timed out: ${btnErr.message}`);
+                } catch (e) {
+                    sendLog(`⚠️ Click button timeout or not found.`);
                 }
 
-                // Check final URL of the subpage after redirects/clicks
                 const finalSubUrl = subPage.url();
-                console.log(`📍 Final Sub-page URL after processing: ${finalSubUrl}`);
+                sendLog(`📍 Final Sub-page URL: ${finalSubUrl}`);
 
                 const subHtml = await subPage.content();
                 const $sub = cheerio.load(subHtml);
 
                 let foundDirectLink = '';
-                
                 $sub('a').each((_, subEl) => {
                     const shref = $sub(subEl).attr('href') || '';
                     if (shref.includes('cloudflarestorage.com') || shref.includes('pixeldrain.com') || shref.includes('.mp4') || shref.includes('token=')) {
@@ -240,16 +213,9 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 await subPage.close();
 
                 if (foundDirectLink) {
-                    console.log(`✅ SUCCESS! Extracted Direct Link: ${foundDirectLink}`);
-                    let qName = "HD";
-                    if (wrap.text.match(/480p/i)) qName = "480p";
-                    else if (wrap.text.match(/720p/i)) qName = "720p";
-                    else if (wrap.text.match(/1080p/i)) qName = "1080p";
-                    else if (wrap.text.match(/2160p|4k/i)) qName = "2160p";
-
-                    let typeLabel = "Direct High-Speed Server";
-                    if (foundDirectLink.includes('pixeldrain')) typeLabel = "PixelDrain";
-                    else if (foundDirectLink.includes('cloudflarestorage')) typeLabel = "Cloudflare R2 Direct";
+                    sendLog(`✅ SUCCESS Direct Link: ${foundDirectLink}`);
+                    let qName = wrap.text.match(/720p/i) ? "720p" : wrap.text.match(/1080p/i) ? "1080p" : "HD";
+                    let typeLabel = foundDirectLink.includes('pixeldrain') ? "PixelDrain" : "Cloudflare R2 Direct";
 
                     if (!downloads.some(d => d.link === foundDirectLink)) {
                         downloads.push({
@@ -260,50 +226,49 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         });
                     }
                 } else {
-                    console.log(`❌ FAILED to extract link from wrapper: ${wrap.href}`);
+                    sendLog(`❌ FAILED to extract link from wrapper.`);
                 }
-
             } catch (innerErr) {
-                console.log(`⚠️ Error processing wrapper link: ${innerErr.message}`);
+                sendLog(`⚠️ Inner error: ${innerErr.message}`);
             }
         }
 
         await browser.close();
-        console.log(`🏁 [DEBUGGER END] Total extracted downloads: ${downloads.length}`);
-        console.log(`==============================================\n`);
+        sendLog(`🏁 Process Finished. Total Links: ${downloads.length}`);
 
-        if (!res.headersSent) {
-            res.json({
-                status: true,
-                creator: "@Imalsha",
-                site: "cinesubz",
-                url: movieUrl,
-                data: {
-                    title,
-                    image: image.trim(),
-                    quality,
-                    rating: rating || '8.0',
-                    imdb: rating ? `${rating} (IMDb)` : 'N/A',
-                    director,
-                    language: "ENGLISH",
-                    genres: genres.length > 0 ? genres : ["Action", "Adventure", "Sinhala Subtitles"],
-                    story: story || 'No description available',
-                    cast: [],
-                    trailer: "https://www.youtube.com/@cinesubz",
-                    year: "2026",
-                    duration: "145 min",
-                    downloads: downloads.length > 0 ? downloads : [{ quality: "HD [Telegram]", size: "N/A", language: "English", link: "https://t.me/CineSubzAdmin" }]
-                }
-            });
-        }
+        // Send final JSON data via SSE stream
+        const finalData = {
+            status: true,
+            creator: "@Imalsha",
+            site: "cinesubz",
+            url: movieUrl,
+            data: {
+                title,
+                image: image.trim(),
+                quality,
+                rating: rating || '8.0',
+                imdb: rating ? `${rating} (IMDb)` : 'N/A',
+                director,
+                language: "ENGLISH",
+                genres: genres.length > 0 ? genres : ["Action", "Adventure", "Sinhala Subtitles"],
+                story: story || 'No description available',
+                cast: [],
+                trailer: "https://www.youtube.com/@cinesubz",
+                year: "2026",
+                duration: "145 min",
+                downloads: downloads.length > 0 ? downloads : [{ quality: "HD [Telegram]", size: "N/A", language: "English", link: "https://t.me/CineSubzAdmin" }]
+            }
+        };
+
+        res.write(`data: ${JSON.stringify({ result: finalData })}\n\n`);
+        res.end();
 
     } catch (err) {
         if (browser) await browser.close();
-        console.error(`❌ [API ERROR]: ${err.message}`);
-        if (!res.headersSent) {
-            res.status(500).json({ status: false, error: err.message });
-        }
+        sendLog(`❌ [API ERROR]: ${err.message}`);
+        res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+        res.end();
     }
 });
 
-app.listen(PORT, () => console.log(`Cinesubz Debugger API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Cinesubz Live Stream API running on port ${PORT}`));
