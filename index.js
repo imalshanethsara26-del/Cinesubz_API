@@ -10,28 +10,106 @@ app.use(cors());
 
 const HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Referer': 'https://cinesubz.net/'
+    'Referer': 'https://cinesubz.net/',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
 };
 
-// Root Route
+// Root Endpoint
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ LIGHTNING FAST API is Live 🚀",
+        message: "IMALSHA CINESUBZ ULTRA FAST API (No-Puppeteer Architecture) 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
-            infodl: "/api/v1/cinesubz/infodl?url=movie_url"
+            infodl: "/api/v1/cinesubz/infodl?url=movie_url",
+            resolve: "/api/v1/cinesubz/resolve?url=zt_link_url"
         }
     });
 });
+
+// Helper: Fix & Normalize URLs
+const resolveAbsoluteUrl = (extractedLink, targetPageUrl) => {
+    if (!extractedLink) return '';
+    try {
+        if (extractedLink.startsWith('http://') || extractedLink.startsWith('https://')) {
+            return extractedLink;
+        }
+        const parsedBase = new URL(targetPageUrl);
+        if (extractedLink.startsWith('//')) {
+            return `${parsedBase.protocol}${extractedLink}`;
+        }
+        if (extractedLink.startsWith('/')) {
+            return `${parsedBase.protocol}//${parsedBase.host}${extractedLink}`;
+        }
+        return `${parsedBase.protocol}//${parsedBase.host}/${extractedLink}`;
+    } catch (e) {
+        return extractedLink;
+    }
+};
+
+// Helper: Resolve ZT-Links using Axios Scraper Layer
+const resolveZtLink = async (ztUrl) => {
+    try {
+        const response = await axios.get(ztUrl, {
+            headers: HEADERS,
+            timeout: 12000,
+            maxRedirects: 5
+        });
+
+        const $ = cheerio.load(response.data);
+        let rawLink = '';
+
+        // 1. Scan anchor tags for CDN or Cloud Storage domains
+        $('a').each((_, el) => {
+            const href = $(el).attr('href') || '';
+            if (
+                href.includes('cloudflarestorage.com') ||
+                href.includes('pixeldrain.com') ||
+                href.includes('.mp4') ||
+                href.includes('supercloud') ||
+                href.includes('/server')
+            ) {
+                if (!rawLink) rawLink = href;
+            }
+        });
+
+        // 2. Scan JavaScript variable blocks if link is obfuscated inside <script>
+        if (!rawLink) {
+            const scriptMatches = response.data.match(/https?:\/\/[^\s"'<>]+(?:cloudflarestorage|pixeldrain|\.mp4|supercloud)[^\s"'<>]+/i);
+            if (scriptMatches) {
+                rawLink = scriptMatches[0];
+            } else {
+                const relativeMatches = response.data.match(/["'](\/server[0-9]*\/[^\s"'<>]+)["']/i);
+                if (relativeMatches) {
+                    rawLink = relativeMatches[1];
+                }
+            }
+        }
+
+        // 3. Fallback to Response URL if server redirected directly
+        if (!rawLink && response.request?.res?.responseUrl) {
+            const finalUrl = response.request.res.responseUrl;
+            if (!finalUrl.includes('zt-links')) {
+                rawLink = finalUrl;
+            }
+        }
+
+        if (rawLink) {
+            return resolveAbsoluteUrl(rawLink, ztUrl);
+        }
+        return null;
+    } catch (err) {
+        return null;
+    }
+};
 
 // 1. Latest Movies Endpoint
 app.get('/api/v1/cinesubz/latest', async (req, res) => {
     try {
         const pageNum = req.query.page || 1;
         const latestUrl = pageNum == 1 ? "https://cinesubz.co/" : `https://cinesubz.co/page/${pageNum}/`;
-        const response = await axios.get(latestUrl, { headers: HEADERS, timeout: 30000 });
+        const response = await axios.get(latestUrl, { headers: HEADERS, timeout: 20000 });
         const $ = cheerio.load(response.data);
         const results = [];
 
@@ -51,6 +129,7 @@ app.get('/api/v1/cinesubz/latest', async (req, res) => {
                 }
             }
         });
+
         res.json({ status: true, creator: "@Imalsha", site: "cinesubz", page: Number(pageNum), results_count: results.length, data: results });
     } catch (err) {
         res.status(500).json({ status: false, error: err.message });
@@ -64,7 +143,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
         if (!query) return res.status(400).json({ status: false, message: "Search term required" });
 
         const searchUrl = "https://cinesubz.co/?s=" + encodeURIComponent(query);
-        const response = await axios.get(searchUrl, { headers: HEADERS, timeout: 30000 });
+        const response = await axios.get(searchUrl, { headers: HEADERS, timeout: 20000 });
         const $ = cheerio.load(response.data);
         const results = [];
 
@@ -84,28 +163,52 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
                 }
             }
         });
+
         res.json({ status: true, creator: "@Imalsha", site: "cinesubz", results_count: results.length, data: results });
     } catch (err) {
         res.status(500).json({ status: false, error: err.message });
     }
 });
 
-// 3. Info & Download Endpoint (Fast Axios-Only Scraper with Absolute URL Fixer)
-app.get('/api/v1/cinesubz/infodl', async (req, res) => {
-    const movieUrl = req.query.url;
-    if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
+// 3. Standalone Resolver Endpoint (Fast ZT Link Extractor)
+app.get('/api/v1/cinesubz/resolve', async (req, res) => {
+    const ztUrl = req.query.url;
+    if (!ztUrl) return res.status(400).json({ status: false, message: "ZT Link URL required" });
 
-    console.log(`\n==============================================`);
-    console.log(`⚡ [FAST AXIOS API] Processing: ${movieUrl}`);
+    const directLink = await resolveZtLink(ztUrl);
+    if (directLink) {
+        let provider = "Direct High-Speed Server";
+        if (directLink.includes('cloudflarestorage')) provider = "Cloudflare R2 Direct Server";
+        else if (directLink.includes('pixeldrain')) provider = "PixelDrain Mirror";
+
+        return res.json({
+            status: true,
+            creator: "@Imalsha",
+            source: "fast_axios_resolver",
+            count: 1,
+            links: [{ provider, url: directLink }]
+        });
+    }
+
+    res.status(404).json({ status: false, message: "Direct download link resolution failed" });
+});
+
+// 4. Main Movie Info & Instant Download Resolver Endpoint
+app.get('/api/v1/cinesubz/infodl', async (req, res) => {
+    const movieUrl = req.query.url || req.query.q;
+    if (!movieUrl) return res.status(400).json({ status: false, message: "Movie URL required" });
+
+    console.log(`⚡ [INSTANT API] Fetching details for: ${movieUrl}`);
 
     try {
-        const movieRes = await axios.get(movieUrl, { headers: HEADERS, timeout: 30000 });
+        const movieRes = await axios.get(movieUrl, { headers: HEADERS, timeout: 25000 });
         const $ = cheerio.load(movieRes.data);
 
         const title = $('meta[property="og:title"]').attr('content') || $('h1').text().trim() || 'Unknown';
         const image = $('meta[property="og:image"]').attr('content') || '';
         const quality = $('.quality').first().text().trim() || 'WEB-DL';
-        const rating = $('span.rating, .imdb-rate').first().text().trim() || 'N/A';
+        const rating = $('span.rating, .imdb-rate').first().text().trim() || '8.2';
+        const imdb = rating !== 'N/A' ? `${rating} (IMDb)` : 'N/A';
         const director = $('span.director').text().trim() || 'N/A';
 
         let story = '';
@@ -125,79 +228,34 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         $('a').each((i, el) => {
             const href = $(el).attr('href') || '';
             const text = $(el).text().trim();
-            if (href.includes('zt-links') || href.includes('api') || href.includes('csplayer') || href.includes('space')) {
+            if (href.includes('zt-links') || href.includes('csplayer') || href.includes('space')) {
                 wrapperLinks.push({ href, text });
             }
         });
 
-        console.log(`📦 Found ${wrapperLinks.length} wrapper links. Fast scanning...`);
+        // Parallel resolution using Promise.all for high speed
+        const downloadPromises = wrapperLinks.map(async (wrap) => {
+            const resolvedUrl = await resolveZtLink(wrap.href);
+            let qName = "HD";
+            if (wrap.text.match(/480p/i)) qName = "480p";
+            else if (wrap.text.match(/720p/i)) qName = "720p";
+            else if (wrap.text.match(/1080p/i)) qName = "1080p";
+            else if (wrap.text.match(/2160p|4k/i)) qName = "2160p";
 
-        const downloads = [];
+            let typeLabel = "Direct High-Speed Server";
+            if (resolvedUrl && resolvedUrl.includes('pixeldrain')) typeLabel = "PixelDrain";
+            else if (resolvedUrl && resolvedUrl.includes('cloudflarestorage')) typeLabel = "Cloudflare R2 Direct";
 
-        for (const wrap of wrapperLinks) {
-            try {
-                const ztRes = await axios.get(wrap.href, { 
-                    headers: HEADERS, 
-                    timeout: 15000,
-                    maxRedirects: 5
-                });
+            return {
+                quality: `WEB-DL ${qName} [${typeLabel}]`,
+                size: "N/A",
+                language: "English",
+                pay_link: resolvedUrl || wrap.href,
+                link: wrap.href
+            };
+        });
 
-                const $zt = cheerio.load(ztRes.data);
-                let foundLink = '';
-
-                // 1. Check all anchor tags inside the zt-links page
-                $zt('a').each((_, ztel) => {
-                    let zh = $zt(ztel).attr('href') || '';
-                    if (zh.includes('cloudflarestorage') || zh.includes('pixeldrain') || zh.includes('.mp4') || zh.includes('token=')) {
-                        foundLink = zh;
-                    }
-                });
-
-                // 2. Check if final axios response URL is the direct file
-                if (!foundLink && ztRes.request && ztRes.request.res && ztRes.request.res.responseUrl) {
-                    const finalUrl = ztRes.request.res.responseUrl;
-                    if (!finalUrl.includes('zt-links')) {
-                        foundLink = finalUrl;
-                    }
-                }
-
-                // 3. Scan script tags for hidden URLs
-                if (!foundLink) {
-                    const htmlContent = ztRes.data;
-                    const match = htmlContent.match(/https?:\/\/[^\s"'<>]+(?:cloudflarestorage|pixeldrain|\.mp4|token=)[^\s"'<>]+/i);
-                    if (match) {
-                        foundLink = match[0];
-                    }
-                }
-
-                if (foundLink) {
-                    // Fix relative URLs (e.g. starting with /server7/) by prepending the base domain
-                    if (foundLink.startsWith('/')) {
-                        const parsedWrapperUrl = new URL(wrap.href);
-                        foundLink = `${parsedWrapperUrl.protocol}//${parsedWrapperUrl.host}${foundLink}`;
-                    }
-
-                    console.log(`✅ Found Direct Link: ${foundLink}`);
-                    let qName = wrap.text.match(/720p/i) ? "720p" : wrap.text.match(/1080p/i) ? "1080p" : wrap.text.match(/480p/i) ? "480p" : "HD";
-                    let typeLabel = foundLink.includes('pixeldrain') ? "PixelDrain" : "Cloudflare R2 Direct";
-
-                    // Filter out unwanted links like bestweb badges
-                    if (!foundLink.includes('bestweb.lk') && !downloads.some(d => d.link === foundLink)) {
-                        downloads.push({
-                            quality: `WEB-DL ${qName} [${typeLabel}]`,
-                            size: "N/A",
-                            language: "English",
-                            link: foundLink
-                        });
-                    }
-                }
-            } catch (innerErr) {
-                console.log(`⚠️ Wrapper error: ${innerErr.message}`);
-            }
-        }
-
-        console.log(`🎉 Total extracted links: ${downloads.length}`);
-        console.log(`==============================================\n`);
+        const downloads = await Promise.all(downloadPromises);
 
         res.json({
             status: true,
@@ -208,8 +266,8 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 title,
                 image: image.trim(),
                 quality,
-                rating: rating || '8.0',
-                imdb: rating ? `${rating} (IMDb)` : 'N/A',
+                rating,
+                imdb,
                 director,
                 language: "ENGLISH",
                 genres: genres.length > 0 ? genres : ["Action", "Adventure", "Sinhala Subtitles"],
@@ -218,7 +276,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 trailer: "https://www.youtube.com/@cinesubz",
                 year: "2026",
                 duration: "145 min",
-                downloads: downloads.length > 0 ? downloads : [{ quality: "HD [Telegram]", size: "N/A", language: "English", link: "https://t.me/CineSubzAdmin" }]
+                downloads
             }
         });
 
@@ -228,4 +286,4 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Cinesubz Fast Axios API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Cinesubz Fast Resolver API is online on port ${PORT}`));
