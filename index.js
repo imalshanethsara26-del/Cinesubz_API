@@ -112,7 +112,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Puppeteer-powered Deep Scraper for CSPlayer / Direct Links)
+// 3. Info & Download Endpoint (Full Terminal Debugger + Puppeteer)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     res.setTimeout(90000, () => {
         if (!res.headersSent) {
@@ -124,11 +124,10 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
     console.log(`\n==============================================`);
-    console.log(`🔥 [PUPPETEER API] Processing Movie: ${movieUrl}`);
+    console.log(`🔍 [DEBUGGER START] Processing Movie: ${movieUrl}`);
 
     let browser;
     try {
-        // Launch headless browser to bypass JS / redirect protections
         browser = await puppeteer.launch({
             headless: true,
             args: ['--no-sandbox', '--disable-setuid-sandbox']
@@ -136,6 +135,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
 
+        console.log(`1️⃣ Navigating to main movie page...`);
         await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
         const html = await page.content();
         const $ = cheerio.load(html);
@@ -159,69 +159,94 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             genres.push($(el).text().trim());
         });
 
-        const cast = [];
-        $('.cast-item, .person, .actor').each((i, el) => {
-            const name = $(el).find('.name, h4').text().trim();
-            const role = $(el).find('.role, .character').text().trim();
-            const img = $(el).find('img').attr('src') || '';
-            if (name) cast.push({ name, role: role || 'Actor', image: img });
-        });
-
-        // Collect wrapper links (zt-links / api download links)
         const wrapperLinks = [];
         $('a').each((i, el) => {
             const href = $(el).attr('href') || '';
             const text = $(el).text().trim();
-            if (href.includes('zt-links') || href.includes('api') || href.includes('csplayer')) {
+            if (href.includes('zt-links') || href.includes('api') || href.includes('csplayer') || href.includes('space')) {
                 wrapperLinks.push({ href, text });
             }
         });
 
-        console.log(`📦 Found ${wrapperLinks.length} wrapper links. Simulating clicks & redirects via Puppeteer...`);
+        console.log(`📦 Found ${wrapperLinks.length} wrapper/download links to inspect.`);
 
         const downloads = [];
 
-        // Loop through each wrapper link and simulate browser navigation to capture final direct link
         for (const wrap of wrapperLinks) {
+            console.log(`\n----------------------------------------------`);
+            console.log(`🚀 Opening wrapper link: ${wrap.href} (Text: ${wrap.text})`);
+            
             try {
-                let qName = "HD";
-                if (wrap.text.match(/480p/i)) qName = "480p";
-                else if (wrap.text.match(/720p/i)) qName = "720p";
-                else if (wrap.text.match(/1080p/i)) qName = "1080p";
-                else if (wrap.text.match(/2160p|4k/i)) qName = "2160p";
-
                 const subPage = await browser.newPage();
+
+                // 🕵️‍♂️ TRACK ALL NETWORK REQUESTS ON THIS SUBPAGE
+                subPage.on('request', request => {
+                    console.log(`🌐 [REQ] --> ${request.method()} : ${request.url()}`);
+                });
+
+                // 📥 TRACK ALL NETWORK RESPONSES (Look for JSON APIs or hidden file links)
+                subPage.on('response', async response => {
+                    const rUrl = response.url();
+                    const rStatus = response.status();
+                    if (rUrl.includes('cloudflare') || rUrl.includes('pixeldrain') || rUrl.includes('.mp4') || rUrl.includes('token=')) {
+                        console.log(`🎯 [FOUND MATCH IN NETWORK] (${rStatus}) ${rUrl}`);
+                    }
+                });
+
+                // Go to intermediate / player page
                 await subPage.goto(wrap.href, { waitUntil: 'networkidle2', timeout: 30000 });
 
-                // Wait for csplayer or timer page to load fully and redirect/render buttons
-                try {
-                    await subPage.waitForSelector('a, button', { timeout: 10000 });
-                } catch (e) {}
+                // Wait a bit for timers or AJAX loads to complete
+                console.log(`⏳ Waiting for timer/dynamic elements to load...`);
+                await new Promise(r => setTimeout(r, 6000));
 
-                // Look for direct download buttons or links inside the page
+                // Try to click the "Go to Download Page" or "Direct Download" button if it exists
+                try {
+                    const downloadBtnSelector = 'a.btn, button, a[href*="csplayer"], a[id*="download"]';
+                    await subPage.waitForSelector(downloadBtnSelector, { timeout: 5000 });
+                    
+                    const btnExists = await subPage.$(downloadBtnSelector);
+                    if (btnExists) {
+                        console.log(`🖱️ Clicking download/redirect button on page...`);
+                        await Promise.all([
+                            btnExists.click(),
+                            subPage.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {})
+                        ]);
+                    }
+                } catch (btnErr) {
+                    console.log(`⚠️ No clickable button found or click timed out: ${btnErr.message}`);
+                }
+
+                // Check final URL of the subpage after redirects/clicks
+                const finalSubUrl = subPage.url();
+                console.log(`📍 Final Sub-page URL after processing: ${finalSubUrl}`);
+
                 const subHtml = await subPage.content();
                 const $sub = cheerio.load(subHtml);
 
                 let foundDirectLink = '';
+                
                 $sub('a').each((_, subEl) => {
                     const shref = $sub(subEl).attr('href') || '';
-                    const stext = $sub(subEl).text();
                     if (shref.includes('cloudflarestorage.com') || shref.includes('pixeldrain.com') || shref.includes('.mp4') || shref.includes('token=')) {
                         foundDirectLink = shref;
                     }
                 });
 
-                // If not found in anchors, check current page URL if it redirected to the final file
-                if (!foundDirectLink) {
-                    const currentUrl = subPage.url();
-                    if (currentUrl.includes('cloudflarestorage') || currentUrl.includes('pixeldrain') || currentUrl.endsWith('.mp4')) {
-                        foundDirectLink = currentUrl;
-                    }
+                if (!foundDirectLink && (finalSubUrl.includes('cloudflare') || finalSubUrl.includes('pixeldrain') || finalSubUrl.endsWith('.mp4'))) {
+                    foundDirectLink = finalSubUrl;
                 }
 
                 await subPage.close();
 
                 if (foundDirectLink) {
+                    console.log(`✅ SUCCESS! Extracted Direct Link: ${foundDirectLink}`);
+                    let qName = "HD";
+                    if (wrap.text.match(/480p/i)) qName = "480p";
+                    else if (wrap.text.match(/720p/i)) qName = "720p";
+                    else if (wrap.text.match(/1080p/i)) qName = "1080p";
+                    else if (wrap.text.match(/2160p|4k/i)) qName = "2160p";
+
                     let typeLabel = "Direct High-Speed Server";
                     if (foundDirectLink.includes('pixeldrain')) typeLabel = "PixelDrain";
                     else if (foundDirectLink.includes('cloudflarestorage')) typeLabel = "Cloudflare R2 Direct";
@@ -234,15 +259,17 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                             link: foundDirectLink
                         });
                     }
+                } else {
+                    console.log(`❌ FAILED to extract link from wrapper: ${wrap.href}`);
                 }
+
             } catch (innerErr) {
-                console.log(`⚠️ Inner link process error: ${innerErr.message}`);
+                console.log(`⚠️ Error processing wrapper link: ${innerErr.message}`);
             }
         }
 
         await browser.close();
-
-        console.log(`🎉 Successfully extracted ${downloads.length} direct links using Puppeteer!`);
+        console.log(`🏁 [DEBUGGER END] Total extracted downloads: ${downloads.length}`);
         console.log(`==============================================\n`);
 
         if (!res.headersSent) {
@@ -261,7 +288,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     language: "ENGLISH",
                     genres: genres.length > 0 ? genres : ["Action", "Adventure", "Sinhala Subtitles"],
                     story: story || 'No description available',
-                    cast,
+                    cast: [],
                     trailer: "https://www.youtube.com/@cinesubz",
                     year: "2026",
                     duration: "145 min",
@@ -279,4 +306,4 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Lightning Fast Cinesubz Puppeteer API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Cinesubz Debugger API running on port ${PORT}`));
