@@ -2,7 +2,6 @@ const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const cors = require('cors');
-const puppeteer = require('puppeteer');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -18,7 +17,7 @@ const HEADERS = {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ ULTIMATE API is Live 🚀",
+        message: "IMALSHA CINESUBZ LIGHTNING FAST API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -91,36 +90,17 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Live SSE Stream + Auto-Clicker & Deep Link Extractor)
+// 3. Info & Download Endpoint (Fast Axios-Only Scraper)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
+    console.log(`\n==============================================`);
+    console.log(`⚡ [FAST AXIOS API] Processing: ${movieUrl}`);
 
-    const sendLog = (msg) => {
-        console.log(msg);
-        res.write(`data: ${JSON.stringify({ log: msg })}\n\n`);
-    };
-
-    sendLog(`\n==============================================`);
-    sendLog(`🔍 [AUTO-CLICK LIVE STREAM] Processing: ${movieUrl}`);
-
-    let browser;
     try {
-        browser = await puppeteer.launch({
-            headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox']
-        });
-        const page = await browser.newPage();
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
-
-        sendLog(`1️⃣ Navigating to movie page...`);
-        await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
-        const html = await page.content();
-        const $ = cheerio.load(html);
+        const movieRes = await axios.get(movieUrl, { headers: HEADERS, timeout: 30000 });
+        const $ = cheerio.load(movieRes.data);
 
         const title = $('meta[property="og:title"]').attr('content') || $('h1').text().trim() || 'Unknown';
         const image = $('meta[property="og:image"]').attr('content') || '';
@@ -150,116 +130,70 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         });
 
-        sendLog(`📦 Found ${wrapperLinks.length} wrapper links.`);
+        console.log(`📦 Found ${wrapperLinks.length} wrapper links. Fast scanning...`);
 
         const downloads = [];
 
         for (const wrap of wrapperLinks) {
-            sendLog(`\n----------------------------------------------`);
-            sendLog(`🚀 Scanning wrapper: ${wrap.href} (Text: ${wrap.text})`);
-            
             try {
-                const subPage = await browser.newPage();
-                let foundDirectLink = '';
+                // Request the zt-links page directly using Axios with maxRedirects
+                const ztRes = await axios.get(wrap.href, { 
+                    headers: HEADERS, 
+                    timeout: 15000,
+                    maxRedirects: 5
+                });
 
-                // Intercept network requests to catch storage/mp4/pixeldrain links
-                subPage.on('response', async response => {
-                    const rUrl = response.url();
-                    if (rUrl.includes('cloudflarestorage') || rUrl.includes('pixeldrain') || rUrl.includes('.mp4') || rUrl.includes('token=')) {
-                        if (!foundDirectLink) foundDirectLink = rUrl;
-                        sendLog(`🎯 [NETWORK MATCH] ${rUrl}`);
+                const $zt = cheerio.load(ztRes.data);
+                let foundLink = '';
+
+                // 1. Check all anchor tags inside the zt-links page
+                $zt('a').each((_, ztel) => {
+                    const zh = $zt(ztel).attr('href') || '';
+                    if (zh.includes('cloudflarestorage') || zh.includes('pixeldrain') || zh.includes('.mp4') || zh.includes('token=')) {
+                        foundLink = zh;
                     }
                 });
 
-                await subPage.goto(wrap.href, { waitUntil: 'networkidle2', timeout: 30000 });
-                sendLog(`⏳ Waiting for countdown timer to finish...`);
-                await new Promise(r => setTimeout(r, 5000)); // Wait for timer
-
-                // 🖱️ AUTO CLICK THE DOWNLOAD / GO TO PAGE BUTTON
-                try {
-                    const downloadBtnSelector = 'a.btn, button, a[href*="csplayer"], a[href*="space"], #download, .btn-download, a';
-                    await subPage.waitForSelector(downloadBtnSelector, { timeout: 4000 });
-                    
-                    const clicked = await subPage.evaluate(() => {
-                        // Find button or anchor that looks like a download/go button
-                        let buttons = document.querySelectorAll('a, button');
-                        for (let btn of buttons) {
-                            let text = btn.innerText.toLowerCase();
-                            if (text.includes('download') || text.includes('go to') || text.includes('click') || text.includes('proceed')) {
-                                btn.click();
-                                return true;
-                            }
-                        }
-                        // If no specific text found, click the first main anchor/button
-                        if (buttons.length > 0) {
-                            buttons[0].click();
-                            return true;
-                        }
-                        return false;
-                    });
-
-                    if (clicked) {
-                        sendLog(`🖱️ Successfully auto-clicked download/redirect button!`);
-                        await new Promise(r => setTimeout(r, 4000)); // Wait for redirect/load after click
+                // 2. Check if the final axios response URL is the direct file
+                if (!foundLink && ztRes.request && ztRes.request.res && ztRes.request.res.responseUrl) {
+                    const finalUrl = ztRes.request.res.responseUrl;
+                    if (!finalUrl.includes('zt-links')) {
+                        foundLink = finalUrl;
                     }
-                } catch (clickErr) {
-                    sendLog(`⚠️ Auto-click warning: ${clickErr.message}`);
                 }
 
-                // Check page scripts for hidden URLs
-                const pageScripts = await subPage.evaluate(() => {
-                    let scripts = document.querySelectorAll('script');
-                    let code = '';
-                    scripts.forEach(s => code += s.innerHTML + '\n');
-                    return code;
-                });
-
-                const urlMatch = pageScripts.match(/https?:\/\/[^\s"'<>]+(?:cloudflarestorage|pixeldrain|\.mp4|token=)[^\s"'<>]+/i);
-                if (urlMatch && !foundDirectLink) {
-                    foundDirectLink = urlMatch[0];
-                    sendLog(`💡 [JS SCRIPT MATCH] ${foundDirectLink}`);
+                // 3. Scan script tags for hidden URLs
+                if (!foundLink) {
+                    const htmlContent = ztRes.data;
+                    const match = htmlContent.match(/https?:\/\/[^\s"'<>]+(?:cloudflarestorage|pixeldrain|\.mp4|token=)[^\s"'<>]+/i);
+                    if (match) {
+                        foundLink = match[0];
+                    }
                 }
 
-                // Check final elements on page
-                const subHtml = await subPage.content();
-                const $sub = cheerio.load(subHtml);
-
-                if (!foundDirectLink) {
-                    $sub('a').each((_, subEl) => {
-                        const shref = $sub(subEl).attr('href') || '';
-                        if (shref.includes('cloudflarestorage.com') || shref.includes('pixeldrain.com') || shref.includes('.mp4') || shref.includes('token=')) {
-                            foundDirectLink = shref;
-                        }
-                    });
-                }
-
-                await subPage.close();
-
-                if (foundDirectLink) {
-                    sendLog(`✅ SUCCESS Direct Link: ${foundDirectLink}`);
+                if (foundLink) {
+                    console.log(`✅ Found Direct Link: ${foundLink}`);
                     let qName = wrap.text.match(/720p/i) ? "720p" : wrap.text.match(/1080p/i) ? "1080p" : wrap.text.match(/480p/i) ? "480p" : "HD";
-                    let typeLabel = foundDirectLink.includes('pixeldrain') ? "PixelDrain" : "Cloudflare R2 Direct";
+                    let typeLabel = foundLink.includes('pixeldrain') ? "PixelDrain" : "Cloudflare R2 Direct";
 
-                    if (!downloads.some(d => d.link === foundDirectLink)) {
+                    if (!downloads.some(d => d.link === foundLink)) {
                         downloads.push({
                             quality: `WEB-DL ${qName} [${typeLabel}]`,
                             size: "N/A",
                             language: "English",
-                            link: foundDirectLink
+                            link: foundLink
                         });
                     }
-                } else {
-                    sendLog(`❌ FAILED: No direct link found for this wrapper.`);
                 }
             } catch (innerErr) {
-                sendLog(`⚠️ Inner scan error: ${innerErr.message}`);
+                console.log(`⚠️ Wrapper error: ${innerErr.message}`);
             }
         }
 
-        await browser.close();
-        sendLog(`🏁 Process Completed. Total Valid Links: ${downloads.length}`);
+        console.log(`🎉 Total extracted links: ${downloads.length}`);
+        console.log(`==============================================\n`);
 
-        const finalData = {
+        res.json({
             status: true,
             creator: "@Imalsha",
             site: "cinesubz",
@@ -280,17 +214,12 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 duration: "145 min",
                 downloads: downloads.length > 0 ? downloads : [{ quality: "HD [Telegram]", size: "N/A", language: "English", link: "https://t.me/CineSubzAdmin" }]
             }
-        };
-
-        res.write(`data: ${JSON.stringify({ result: finalData })}\n\n`);
-        res.end();
+        });
 
     } catch (err) {
-        if (browser) await browser.close();
-        sendLog(`❌ [API ERROR]: ${err.message}`);
-        res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
-        res.end();
+        console.error(`❌ [API ERROR]: ${err.message}`);
+        res.status(500).json({ status: false, error: err.message });
     }
 });
 
-app.listen(PORT, () => console.log(`Cinesubz Auto-Click API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Cinesubz Fast Axios API running on port ${PORT}`));
