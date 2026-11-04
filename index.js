@@ -18,7 +18,7 @@ const HEADERS = {
 app.get('/', (req, res) => {
     res.json({
         status: true,
-        message: "IMALSHA CINESUBZ LIVE DEBUGGER API is Live 🚀",
+        message: "IMALSHA CINESUBZ ULTIMATE API is Live 🚀",
         endpoints: {
             latest: "/api/v1/cinesubz/latest?page=1",
             search: "/api/v1/cinesubz/search?q=movie_name",
@@ -91,12 +91,11 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Live SSE Stream Debugger)
+// 3. Info & Download Endpoint (Live SSE Stream + Advanced Deep Link Extractor)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
 
-    // Set headers for Server-Sent Events (Live Stream to Browser/Terminal)
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -107,7 +106,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     };
 
     sendLog(`\n==============================================`);
-    sendLog(`🔍 [LIVE STREAM START] Processing: ${movieUrl}`);
+    sendLog(`🔍 [ADVANCED LIVE STREAM] Processing: ${movieUrl}`);
 
     let browser;
     try {
@@ -118,7 +117,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
         const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
 
-        sendLog(`1️⃣ Navigating to main movie page...`);
+        sendLog(`1️⃣ Navigating to movie page...`);
         await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
         const html = await page.content();
         const $ = cheerio.load(html);
@@ -151,63 +150,57 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
             }
         });
 
-        sendLog(`📦 Found ${wrapperLinks.length} wrapper/download links to inspect.`);
+        sendLog(`📦 Found ${wrapperLinks.length} wrapper links.`);
 
         const downloads = [];
 
         for (const wrap of wrapperLinks) {
             sendLog(`\n----------------------------------------------`);
-            sendLog(`🚀 Opening wrapper link: ${wrap.href}`);
+            sendLog(`🚀 Scanning wrapper: ${wrap.href} (Text: ${wrap.text})`);
             
             try {
                 const subPage = await browser.newPage();
+                let foundDirectLink = '';
 
-                subPage.on('request', request => {
-                    sendLog(`🌐 [REQ] ${request.method()} : ${request.url()}`);
-                });
-
+                // Intercept network responses to catch hidden file downloads dynamically
                 subPage.on('response', async response => {
                     const rUrl = response.url();
-                    if (rUrl.includes('cloudflare') || rUrl.includes('pixeldrain') || rUrl.includes('.mp4') || rUrl.includes('token=')) {
-                        sendLog(`🎯 [MATCH] ${rUrl}`);
+                    if (rUrl.includes('cloudflarestorage') || rUrl.includes('pixeldrain') || rUrl.includes('.mp4') || rUrl.includes('token=')) {
+                        if (!foundDirectLink) foundDirectLink = rUrl;
+                        sendLog(`🎯 [NETWORK MATCH] ${rUrl}`);
                     }
                 });
 
                 await subPage.goto(wrap.href, { waitUntil: 'networkidle2', timeout: 30000 });
-                sendLog(`⏳ Waiting for timer/dynamic elements...`);
+                sendLog(`⏳ Waiting for page countdown/timer to finish...`);
                 await new Promise(r => setTimeout(r, 6000));
 
-                try {
-                    const downloadBtnSelector = 'a.btn, button, a[href*="csplayer"], a[id*="download"]';
-                    await subPage.waitForSelector(downloadBtnSelector, { timeout: 5000 });
-                    const btnExists = await subPage.$(downloadBtnSelector);
-                    if (btnExists) {
-                        sendLog(`🖱️ Clicking download button...`);
-                        await Promise.all([
-                            btnExists.click(),
-                            subPage.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {})
-                        ]);
-                    }
-                } catch (e) {
-                    sendLog(`⚠️ Click button timeout or not found.`);
+                // Extract all script contents to check if links are hidden inside JavaScript variables
+                const pageScripts = await subPage.evaluate(() => {
+                    let scripts = document.querySelectorAll('script');
+                    let code = '';
+                    scripts.forEach(s => code += s.innerHTML + '\n');
+                    return code;
+                });
+
+                // Regex to find http/https URLs inside script tags
+                const urlMatch = pageScripts.match(/https?:\/\/[^\s"'<>]+(?:cloudflarestorage|pixeldrain|\.mp4|token=)[^\s"'<>]+/i);
+                if (urlMatch && !foundDirectLink) {
+                    foundDirectLink = urlMatch[0];
+                    sendLog(`💡 [JS SCRIPT MATCH] Found link inside script: ${foundDirectLink}`);
                 }
 
-                const finalSubUrl = subPage.url();
-                sendLog(`📍 Final Sub-page URL: ${finalSubUrl}`);
-
+                // If not found, look at the page HTML elements
                 const subHtml = await subPage.content();
                 const $sub = cheerio.load(subHtml);
 
-                let foundDirectLink = '';
-                $sub('a').each((_, subEl) => {
-                    const shref = $sub(subEl).attr('href') || '';
-                    if (shref.includes('cloudflarestorage.com') || shref.includes('pixeldrain.com') || shref.includes('.mp4') || shref.includes('token=')) {
-                        foundDirectLink = shref;
-                    }
-                });
-
-                if (!foundDirectLink && (finalSubUrl.includes('cloudflare') || finalSubUrl.includes('pixeldrain') || finalSubUrl.endsWith('.mp4'))) {
-                    foundDirectLink = finalSubUrl;
+                if (!foundDirectLink) {
+                    $sub('a').each((_, subEl) => {
+                        const shref = $sub(subEl).attr('href') || '';
+                        if (shref.includes('cloudflarestorage.com') || shref.includes('pixeldrain.com') || shref.includes('.mp4') || shref.includes('token=')) {
+                            foundDirectLink = shref;
+                        }
+                    });
                 }
 
                 await subPage.close();
@@ -226,17 +219,16 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                         });
                     }
                 } else {
-                    sendLog(`❌ FAILED to extract link from wrapper.`);
+                    sendLog(`❌ FAILED: No direct link found for this wrapper.`);
                 }
             } catch (innerErr) {
-                sendLog(`⚠️ Inner error: ${innerErr.message}`);
+                sendLog(`⚠️ Inner scan error: ${innerErr.message}`);
             }
         }
 
         await browser.close();
-        sendLog(`🏁 Process Finished. Total Links: ${downloads.length}`);
+        sendLog(`🏁 Process Completed. Total Valid Links: ${downloads.length}`);
 
-        // Send final JSON data via SSE stream
         const finalData = {
             status: true,
             creator: "@Imalsha",
@@ -271,4 +263,4 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Cinesubz Live Stream API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Cinesubz Advanced Live API running on port ${PORT}`));
