@@ -91,7 +91,7 @@ app.get('/api/v1/cinesubz/search', async (req, res) => {
     }
 });
 
-// 3. Info & Download Endpoint (Live SSE Stream + Advanced Deep Link Extractor)
+// 3. Info & Download Endpoint (Live SSE Stream + Auto-Clicker & Deep Link Extractor)
 app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     const movieUrl = req.query.url;
     if (!movieUrl) return res.status(400).json({ status: false, message: "URL required" });
@@ -106,7 +106,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     };
 
     sendLog(`\n==============================================`);
-    sendLog(`🔍 [ADVANCED LIVE STREAM] Processing: ${movieUrl}`);
+    sendLog(`🔍 [AUTO-CLICK LIVE STREAM] Processing: ${movieUrl}`);
 
     let browser;
     try {
@@ -162,7 +162,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 const subPage = await browser.newPage();
                 let foundDirectLink = '';
 
-                // Intercept network responses to catch hidden file downloads dynamically
+                // Intercept network requests to catch storage/mp4/pixeldrain links
                 subPage.on('response', async response => {
                     const rUrl = response.url();
                     if (rUrl.includes('cloudflarestorage') || rUrl.includes('pixeldrain') || rUrl.includes('.mp4') || rUrl.includes('token=')) {
@@ -172,10 +172,41 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                 });
 
                 await subPage.goto(wrap.href, { waitUntil: 'networkidle2', timeout: 30000 });
-                sendLog(`⏳ Waiting for page countdown/timer to finish...`);
-                await new Promise(r => setTimeout(r, 6000));
+                sendLog(`⏳ Waiting for countdown timer to finish...`);
+                await new Promise(r => setTimeout(r, 5000)); // Wait for timer
 
-                // Extract all script contents to check if links are hidden inside JavaScript variables
+                // 🖱️ AUTO CLICK THE DOWNLOAD / GO TO PAGE BUTTON
+                try {
+                    const downloadBtnSelector = 'a.btn, button, a[href*="csplayer"], a[href*="space"], #download, .btn-download, a';
+                    await subPage.waitForSelector(downloadBtnSelector, { timeout: 4000 });
+                    
+                    const clicked = await subPage.evaluate(() => {
+                        // Find button or anchor that looks like a download/go button
+                        let buttons = document.querySelectorAll('a, button');
+                        for (let btn of buttons) {
+                            let text = btn.innerText.toLowerCase();
+                            if (text.includes('download') || text.includes('go to') || text.includes('click') || text.includes('proceed')) {
+                                btn.click();
+                                return true;
+                            }
+                        }
+                        // If no specific text found, click the first main anchor/button
+                        if (buttons.length > 0) {
+                            buttons[0].click();
+                            return true;
+                        }
+                        return false;
+                    });
+
+                    if (clicked) {
+                        sendLog(`🖱️ Successfully auto-clicked download/redirect button!`);
+                        await new Promise(r => setTimeout(r, 4000)); // Wait for redirect/load after click
+                    }
+                } catch (clickErr) {
+                    sendLog(`⚠️ Auto-click warning: ${clickErr.message}`);
+                }
+
+                // Check page scripts for hidden URLs
                 const pageScripts = await subPage.evaluate(() => {
                     let scripts = document.querySelectorAll('script');
                     let code = '';
@@ -183,14 +214,13 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
                     return code;
                 });
 
-                // Regex to find http/https URLs inside script tags
                 const urlMatch = pageScripts.match(/https?:\/\/[^\s"'<>]+(?:cloudflarestorage|pixeldrain|\.mp4|token=)[^\s"'<>]+/i);
                 if (urlMatch && !foundDirectLink) {
                     foundDirectLink = urlMatch[0];
-                    sendLog(`💡 [JS SCRIPT MATCH] Found link inside script: ${foundDirectLink}`);
+                    sendLog(`💡 [JS SCRIPT MATCH] ${foundDirectLink}`);
                 }
 
-                // If not found, look at the page HTML elements
+                // Check final elements on page
                 const subHtml = await subPage.content();
                 const $sub = cheerio.load(subHtml);
 
@@ -207,7 +237,7 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
 
                 if (foundDirectLink) {
                     sendLog(`✅ SUCCESS Direct Link: ${foundDirectLink}`);
-                    let qName = wrap.text.match(/720p/i) ? "720p" : wrap.text.match(/1080p/i) ? "1080p" : "HD";
+                    let qName = wrap.text.match(/720p/i) ? "720p" : wrap.text.match(/1080p/i) ? "1080p" : wrap.text.match(/480p/i) ? "480p" : "HD";
                     let typeLabel = foundDirectLink.includes('pixeldrain') ? "PixelDrain" : "Cloudflare R2 Direct";
 
                     if (!downloads.some(d => d.link === foundDirectLink)) {
@@ -263,4 +293,4 @@ app.get('/api/v1/cinesubz/infodl', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Cinesubz Advanced Live API running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Cinesubz Auto-Click API running on port ${PORT}`));
